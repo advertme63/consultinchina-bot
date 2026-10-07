@@ -6,7 +6,8 @@ from typing import Optional
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 
 import database
@@ -17,8 +18,8 @@ from services.tg_format import to_plain, to_telegram_html
 
 logger = logging.getLogger(__name__)
 router = Router()
+router.message.filter(F.chat.type == "private")
 
-COMING_SOON = "Этот раздел скоро заработает. А пока напишите вопрос своими словами — отвечу по нашим справочникам."
 LIMIT_EXHAUSTED = (
     "Лимит на сегодня исчерпан, он обновится в 00:00 по Шанхаю. "
     "Если вопрос срочный — оставьте контакт, Валерий Загурский ответит лично."
@@ -26,24 +27,15 @@ LIMIT_EXHAUSTED = (
 
 
 @router.message(F.text.in_({kb.BTN_ASK, kb.LEGACY_KB}))
-async def ask_hint(message: Message) -> None:
+async def ask_hint(message: Message, state: FSMContext) -> None:
+    await state.clear()
     await message.answer("Напишите вопрос своими словами.", reply_markup=kb.MAIN_MENU)
-
-
-@router.message(F.text.in_({kb.BTN_QUALIFY, kb.BTN_MANAGER, kb.LEGACY_TICKETS}))
-async def coming_soon(message: Message) -> None:
-    await message.answer(COMING_SOON, reply_markup=kb.MAIN_MENU)
-
-
-@router.callback_query(F.data.in_({"cta:qualify", "cta:manager"}))
-async def cta_coming_soon(callback: CallbackQuery) -> None:
-    await callback.answer()
-    await callback.message.answer(COMING_SOON)
 
 
 @router.message(F.text == kb.BTN_LIMIT)
 @router.message(Command("limit"))
-async def my_limit(message: Message, user: Optional[dict] = None) -> None:
+async def my_limit(message: Message, state: FSMContext, user: Optional[dict] = None) -> None:
+    await state.clear()
     limit = daily_limit(message.from_user.id, user["role"] if user else None)
     if limit is None:
         await message.answer("У вас нет лимита на вопросы.")

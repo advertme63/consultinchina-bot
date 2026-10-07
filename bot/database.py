@@ -217,18 +217,6 @@ async def search_chunks(
         )
 
 
-# --- tickets -------------------------------------------------------------
-
-async def create_ticket(telegram_id: int, category: str, text: str) -> int:
-    async with pool().acquire() as conn:
-        return await conn.fetchval(
-            "INSERT INTO tickets (telegram_id, category, text) VALUES ($1, $2, $3) RETURNING id",
-            telegram_id,
-            category,
-            text,
-        )
-
-
 # --- files library ---------------------------------------------------------
 
 async def add_file_to_library(filename: str, storage_path: str, title: str) -> None:
@@ -423,3 +411,131 @@ async def log_event(telegram_id: Optional[int], event_type: str, payload: Option
             event_type,
             payload,
         )
+
+
+# --- settings ----------------------------------------------------------------
+
+async def get_setting(key: str) -> Optional[str]:
+    async with pool().acquire() as conn:
+        return await conn.fetchval("SELECT value FROM settings WHERE key = $1", key)
+
+
+async def set_setting(key: str, value: str) -> None:
+    async with pool().acquire() as conn:
+        await conn.execute(
+            "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            key,
+            value,
+        )
+
+
+# --- source (ТЗ 5) -------------------------------------------------------------
+
+async def set_source_if_empty(telegram_id: int, source: str) -> bool:
+    """Первую метку источника не перезаписываем. True — метка записана сейчас."""
+    async with pool().acquire() as conn:
+        return await conn.fetchval(
+            "UPDATE users SET source = $2 WHERE telegram_id = $1 AND source IS NULL RETURNING true",
+            telegram_id,
+            source,
+        ) or False
+
+
+# --- qualification / leads (ТЗ 6) ----------------------------------------------
+
+async def last_qualification(telegram_id: int, days: int = 7) -> Optional[asyncpg.Record]:
+    """Последний итог квалификации пользователя (событие qualify_done)."""
+    async with pool().acquire() as conn:
+        return await conn.fetchrow(
+            """
+            SELECT payload, created_at FROM events
+            WHERE telegram_id = $1 AND type = 'qualify_done' AND created_at > now() - make_interval(days => $2)
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            telegram_id,
+            days,
+        )
+
+
+async def recent_lead(telegram_id: int, hours: int = 24) -> Optional[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        return await conn.fetchrow(
+            """
+            SELECT * FROM leads
+            WHERE telegram_id = $1 AND group_message_id IS NOT NULL
+              AND created_at > now() - make_interval(hours => $2)
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            telegram_id,
+            hours,
+        )
+
+
+async def create_lead(
+    telegram_id: int, name: str, phone: Optional[str], answers: Optional[str], verdict: Optional[str], summary: str
+) -> int:
+    async with pool().acquire() as conn:
+        return await conn.fetchval(
+            """
+            INSERT INTO leads (telegram_id, name, phone, answers, verdict, summary)
+            VALUES ($1, $2, $3, $4::jsonb, $5, $6) RETURNING id
+            """,
+            telegram_id,
+            name,
+            phone,
+            answers,
+            verdict,
+            summary,
+        )
+
+
+async def update_lead_contact(
+    lead_id: int, name: str, phone: Optional[str], answers: Optional[str], verdict: Optional[str]
+) -> None:
+    """Повторная заявка: обновляем контакт и, если есть новая квалификация, её итог."""
+    async with pool().acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE leads SET name = $2, phone = COALESCE($3, phone),
+                answers = COALESCE($4::jsonb, answers), verdict = COALESCE($5, verdict), updated_at = now()
+            WHERE id = $1
+            """,
+            lead_id,
+            name,
+            phone,
+            answers,
+            verdict,
+        )
+
+
+async def set_lead_group_message(lead_id: int, message_id: int) -> None:
+    async with pool().acquire() as conn:
+        await conn.execute("UPDATE leads SET group_message_id = $2 WHERE id = $1", lead_id, message_id)
+
+
+async def take_lead(lead_id: int, manager_id: int) -> Optional[asyncpg.Record]:
+    """«Взял в работу»: только из статуса new. None — уже кто-то взял (или заявки нет)."""
+    async with pool().acquire() as conn:
+        return await conn.fetchrow(
+            """
+            UPDATE leads SET status = 'in_progress', manager_id = $2, updated_at = now()
+            WHERE id = $1 AND status = 'new' RETURNING *
+            """,
+            lead_id,
+            manager_id,
+        )
+
+
+async def get_lead(lead_id: int) -> Optional[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM leads WHERE id = $1", lead_id)
+
+
+async def recent_messages(telegram_id: int, limit: int = 10) -> list[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT question, answer FROM messages WHERE telegram_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
+            telegram_id,
+            limit,
+        )
+    return list(reversed(rows))

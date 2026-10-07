@@ -84,3 +84,22 @@ async def ask_claude(history: list[dict], user_content: str) -> ClaudeReply:
         cache_read=cache_read,
         cache_write=cache_write,
     )
+
+
+async def ask_claude_text(user_content: str, max_tokens: int = 600) -> tuple[str, int, int]:
+    """Свободный текст с тем же системным промптом (голос, стоп-лист, прайс). → (текст, токены вход, выход)."""
+    client = _get_client()
+    message = await client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user_content}],
+    )
+    text = "".join(b.text for b in message.content if getattr(b, "type", None) == "text").strip()
+    if not text:
+        raise RuntimeError(f"Claude не вернул текст (stop_reason={message.stop_reason})")
+    u = message.usage
+    tokens_in = u.input_tokens + (getattr(u, "cache_read_input_tokens", 0) or 0) + (
+        getattr(u, "cache_creation_input_tokens", 0) or 0
+    )
+    return text, tokens_in, u.output_tokens

@@ -1,9 +1,13 @@
 from aiogram.fsm.state import State, StatesGroup
 
 
-class TicketStates(StatesGroup):
-    choosing_category = State()
-    entering_text = State()
+class QualifyStates(StatesGroup):
+    step = State()  # номер шага — в данных FSM
+
+
+class LeadStates(StatesGroup):
+    name = State()
+    phone = State()
 
 
 class UploadStates(StatesGroup):

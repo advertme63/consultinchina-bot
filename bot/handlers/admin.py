@@ -24,6 +24,7 @@ KB_PREV_DIR = Path("/app/data/kb_prev")
 KB_EXTRA_DIR = Path("/app/data/kb_extra")
 
 router = Router()
+router.message.filter(F.chat.type == "private")
 router.message.filter(F.from_user.id == config.ADMIN_TELEGRAM_ID)
 router.callback_query.filter(F.from_user.id == config.ADMIN_TELEGRAM_ID)
 

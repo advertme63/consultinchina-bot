@@ -5,6 +5,7 @@ import database
 from keyboards import BTN_MATERIALS, LEGACY_DOCS
 
 router = Router()
+router.message.filter(F.chat.type == "private")
 
 
 @router.message(F.text.in_({BTN_MATERIALS, LEGACY_DOCS}))

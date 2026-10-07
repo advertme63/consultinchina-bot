@@ -13,6 +13,8 @@ class Config:
     RELEVANCE_THRESHOLD = float(os.environ.get("RELEVANCE_THRESHOLD", "0.68"))
     # Вес полнотекстового ранга в RRF гибридного поиска (подобран на тестах Э2)
     FTS_WEIGHT = float(os.environ.get("FTS_WEIGHT", "2.0"))
+    # Группа «CinC Лиды»; после миграции в супергруппу актуальный ID берётся из settings.leads_chat_id
+    LEADS_CHAT_ID = int(os.environ["LEADS_CHAT_ID"]) if os.environ.get("LEADS_CHAT_ID") else None
     DAILY_LIMIT_GUEST = int(os.environ.get("DAILY_LIMIT_GUEST", "15"))
     DAILY_LIMIT_CLIENT = int(os.environ.get("DAILY_LIMIT_CLIENT", "30"))
 

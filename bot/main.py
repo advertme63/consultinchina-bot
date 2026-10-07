@@ -8,7 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import database
 from config import config
-from handlers import admin, documents, questions, start
+from handlers import admin, documents, leads, qualify, questions, start
 from middlewares.access import AccessMiddleware
 
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +26,8 @@ async def main() -> None:
     dp.include_router(admin.router)
     dp.include_router(start.router)
     dp.include_router(documents.router)
+    dp.include_router(qualify.router)
+    dp.include_router(leads.router)
     dp.include_router(questions.router)  # последним: любой текст = вопрос
 
     try:

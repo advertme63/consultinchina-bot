@@ -24,6 +24,7 @@ MAIN_MENU = ReplyKeyboardMarkup(
 
 CTA_QUALIFY_TEXT = "📊 Проверить, подходит ли мне"
 CTA_MANAGER_TEXT = "👤 Связаться с менеджером"
+CTA_REVIEW_TEXT = "👤 Разбор с Валерием Загурским"
 
 
 def cta_keyboard(intent: str, cta: str) -> InlineKeyboardMarkup | None:
