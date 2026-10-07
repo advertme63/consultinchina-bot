@@ -11,6 +11,10 @@ class Config:
     VOYAGE_MODEL = os.environ.get("VOYAGE_MODEL", "voyage-3-lite")
     # Порог косинусного расстояния лучшего фрагмента (ТЗ 3.4): выше — фрагменты нерелевантны
     RELEVANCE_THRESHOLD = float(os.environ.get("RELEVANCE_THRESHOLD", "0.68"))
+    # Вес полнотекстового ранга в RRF гибридного поиска (подобран на тестах Э2)
+    FTS_WEIGHT = float(os.environ.get("FTS_WEIGHT", "2.0"))
+    DAILY_LIMIT_GUEST = int(os.environ.get("DAILY_LIMIT_GUEST", "15"))
+    DAILY_LIMIT_CLIENT = int(os.environ.get("DAILY_LIMIT_CLIENT", "30"))
 
 
 config = Config()

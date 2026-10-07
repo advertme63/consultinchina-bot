@@ -1,10 +1,6 @@
 from aiogram.fsm.state import State, StatesGroup
 
 
-class KnowledgeStates(StatesGroup):
-    active = State()
-
-
 class TicketStates(StatesGroup):
     choosing_category = State()
     entering_text = State()

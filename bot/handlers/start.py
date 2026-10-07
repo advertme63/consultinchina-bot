@@ -1,19 +1,24 @@
 from aiogram import Router
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from config import config
 from keyboards import MAIN_MENU
 
 router = Router()
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message) -> None:
+async def cmd_start(message: Message, state: FSMContext) -> None:
+    await state.clear()
     await message.answer(
-        "Здравствуйте! Я — умный справочник ConsultInChina.\n\n"
-        "📚 <b>Справочник</b> — отвечу на вопросы по регистрации, бухгалтерии, ликвидации "
-        "и другим темам на основе наших материалов\n"
-        "✉️ <b>Обращения</b> — если не нашли ответ, оставьте вопрос, и мы свяжемся с вами\n"
-        "📄 <b>Документы</b> — полезные материалы для скачивания",
+        "Здравствуйте! Я бот Consult in China.\n"
+        "Отвечу на вопросы о компании в Китае, налогах, оплате поставщикам и ликвидации — "
+        "по нашим справочникам.\n"
+        "Если хотите понять, выгодна ли вашему магазину китайская компания, нажмите «📊 Подходит ли мне».\n"
+        "Невыгодно — так и скажем.\n\n"
+        f"Для гостей — до {config.DAILY_LIMIT_GUEST} вопросов в сутки, для клиентов — до "
+        f"{config.DAILY_LIMIT_CLIENT}. Мы сохраняем вопросы и ответы, чтобы бот отвечал точнее.",
         reply_markup=MAIN_MENU,
     )
