@@ -9,6 +9,7 @@
 сообщения, «новые вопросы» и события удаляются, чтобы история не перетекала между прогонами.
 """
 import asyncio
+import os
 import re
 import sys
 import time
@@ -22,7 +23,7 @@ from config import config
 from services.answer import answer_question
 
 TESTS_FILE = Path("/app/docs/tests_e2.md")
-REPORT = Path("/report/e2_test_report.md")
+REPORT = Path(os.environ.get("E2_REPORT", "/report/e2_test_report.md"))
 VOYAGE_PAUSE = 21  # Voyage без карты: 3 запроса в минуту
 
 # Оценка стоимости, $ за 1 млн токенов (уровень Sonnet): вход / запись в кэш / чтение кэша / выход

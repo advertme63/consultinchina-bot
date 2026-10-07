@@ -2,7 +2,7 @@ import logging
 import os
 import re
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from html import escape
 from pathlib import Path
 
@@ -27,23 +27,6 @@ router.message.filter(F.from_user.id == config.ADMIN_TELEGRAM_ID)
 router.callback_query.filter(F.from_user.id == config.ADMIN_TELEGRAM_ID)
 
 # --- access management -----------------------------------------------------
-
-@router.message(Command("grant_trial"))
-async def grant_trial(message: Message) -> None:
-    parts = message.text.split()
-    if len(parts) != 3:
-        await message.answer("Использование: /grant_trial <telegram_id> <дней>")
-        return
-    try:
-        target_id, days = int(parts[1]), int(parts[2])
-    except ValueError:
-        await message.answer("ID и количество дней должны быть числами.")
-        return
-    expires = datetime.now(timezone.utc) + timedelta(days=days)
-    await database.ensure_user(target_id, None)
-    await database.set_role(target_id, "trial", expires)
-    await message.answer(f"Пользователю {target_id} выдан trial на {days} дн. (до {expires:%d.%m.%Y}).")
-
 
 @router.message(Command("grant_full"))
 async def grant_full(message: Message) -> None:

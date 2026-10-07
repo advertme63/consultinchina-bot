@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 MAX_QUESTION_CHARS = 2000
 SEARCH_LIMIT = 8
 HISTORY_PAIRS = 3  # 6 сообщений
+NOT_KB_GAP_INTENTS = ("off_topic", "wants_human")
 
 
 @dataclass
@@ -98,7 +99,8 @@ async def answer_question(telegram_id: int, question: str) -> AnswerResult:
         telegram_id, question, reply.answer, doc_keys, best_distance, answered_from_kb,
         reply.intent, reply.cta, reply.tokens_in, reply.tokens_out, latency_ms,
     )
-    if not answered_from_kb:
+    # Пробел в базе — только справочные вопросы: «хочу человека» и вне темы в сводку не идут
+    if not answered_from_kb and reply.intent not in NOT_KB_GAP_INTENTS:
         await database.save_unanswered(telegram_id, question, reply.answer)
 
     return AnswerResult(
