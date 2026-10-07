@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from config import config
-from keyboards import menu_for
+from keyboards import MAIN_MENU
 
 router = Router()
 
@@ -20,5 +20,5 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         "Невыгодно — так и скажем.\n\n"
         f"Для гостей — до {config.DAILY_LIMIT_GUEST} вопросов в сутки, для клиентов — до "
         f"{config.DAILY_LIMIT_CLIENT}. Мы сохраняем вопросы и ответы, чтобы бот отвечал точнее.",
-        reply_markup=menu_for(message.from_user.id),
+        reply_markup=MAIN_MENU,
     )

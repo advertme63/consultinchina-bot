@@ -1,7 +1,5 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup
 
-from config import config
-
 BTN_ASK = "💬 Задать вопрос"
 BTN_QUALIFY = "📊 Подходит ли мне компания в Китае"
 BTN_MANAGER = "👤 Связаться с менеджером"
@@ -18,26 +16,11 @@ MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_ASK)],
         [KeyboardButton(text=BTN_QUALIFY)],
-        [KeyboardButton(text=BTN_MANAGER), KeyboardButton(text=BTN_LIMIT)],
-    ],
-    resize_keyboard=True,
-)
-
-# Админу — то же плюс «📄 Материалы» (библиотека files_library, пополняется через /add_file)
-ADMIN_MENU = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text=BTN_ASK)],
-        [KeyboardButton(text=BTN_QUALIFY)],
         [KeyboardButton(text=BTN_MANAGER), KeyboardButton(text=BTN_MATERIALS)],
         [KeyboardButton(text=BTN_LIMIT)],
     ],
     resize_keyboard=True,
 )
-
-
-def menu_for(telegram_id: int) -> ReplyKeyboardMarkup:
-    return ADMIN_MENU if telegram_id == config.ADMIN_TELEGRAM_ID else MAIN_MENU
-
 
 CTA_QUALIFY_TEXT = "📊 Проверить, подходит ли мне"
 CTA_MANAGER_TEXT = "👤 Связаться с менеджером"
