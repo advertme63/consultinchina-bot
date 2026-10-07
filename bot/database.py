@@ -115,6 +115,70 @@ async def insert_chunks(
         )
 
 
+async def get_document_by_key(doc_key: str) -> Optional[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM documents WHERE doc_key = $1", doc_key)
+
+
+async def replace_document(
+    doc_key: str,
+    filename: str,
+    topic: str,
+    doc_type: str,
+    version_date: date,
+    source_hash: str,
+    uploaded_by: Optional[int],
+    chunks_with_embeddings: list[tuple[str, list[float]]],
+) -> tuple[int, bool]:
+    """Одна транзакция: удалить старую версию по doc_key (фрагменты каскадом) и записать новую.
+    Возвращает (id нового документа, была ли заменена старая версия)."""
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            old_id = await conn.fetchval("DELETE FROM documents WHERE doc_key = $1 RETURNING id", doc_key)
+            document_id = await conn.fetchval(
+                """
+                INSERT INTO documents (filename, topic, doc_type, version_date, uploaded_by, doc_key, source_hash)
+                VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+                """,
+                filename,
+                topic,
+                doc_type,
+                version_date,
+                uploaded_by,
+                doc_key,
+                source_hash,
+            )
+            await conn.executemany(
+                """
+                INSERT INTO chunks (document_id, content, embedding, topic, doc_type, version_date)
+                VALUES ($1, $2, $3::vector, $4, $5, $6)
+                """,
+                [
+                    (document_id, content, _embedding_to_pg(embedding), topic, doc_type, version_date)
+                    for content, embedding in chunks_with_embeddings
+                ],
+            )
+    return document_id, old_id is not None
+
+
+async def list_documents() -> list[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        return await conn.fetch(
+            """
+            SELECT d.id, d.doc_key, d.filename, d.topic, d.version_date, d.uploaded_at,
+                   count(c.id) AS chunks
+            FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+            GROUP BY d.id
+            ORDER BY d.doc_key NULLS LAST, d.id
+            """
+        )
+
+
+async def delete_document_by_key(doc_key: str) -> Optional[str]:
+    async with pool().acquire() as conn:
+        return await conn.fetchval("DELETE FROM documents WHERE doc_key = $1 RETURNING filename", doc_key)
+
+
 async def search_chunks(
     query_embedding: list[float], topic: Optional[str] = None, limit: int = 8
 ) -> list[asyncpg.Record]:

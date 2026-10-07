@@ -26,3 +26,9 @@ async def embed_documents(texts: list[str]) -> list[list[float]]:
     client = _get_client()
     result = await client.embed(texts, model=config.VOYAGE_MODEL, input_type="document")
     return result.embeddings
+
+
+async def embed_documents_with_usage(texts: list[str]) -> tuple[list[list[float]], int]:
+    client = _get_client()
+    result = await client.embed(texts, model=config.VOYAGE_MODEL, input_type="document")
+    return result.embeddings, result.total_tokens

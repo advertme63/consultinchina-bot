@@ -12,8 +12,8 @@ class TicketStates(StatesGroup):
 
 class UploadStates(StatesGroup):
     waiting_file = State()
+    waiting_key = State()
     waiting_topic = State()
-    waiting_type = State()
 
 
 class AddFileStates(StatesGroup):
