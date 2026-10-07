@@ -25,14 +25,15 @@ LIMIT_EXHAUSTED = (
 )
 
 
-@router.message(F.text.in_({kb.BTN_ASK, kb.LEGACY_KB}))
+# «📄 Материалы» / «📄 Документы» у админа перехватывает handlers/documents.py, остальным — подсказка
+@router.message(F.text.in_({kb.BTN_ASK, kb.LEGACY_KB, kb.BTN_MATERIALS, kb.LEGACY_DOCS}))
 async def ask_hint(message: Message) -> None:
-    await message.answer("Напишите вопрос своими словами.", reply_markup=kb.MAIN_MENU)
+    await message.answer("Напишите вопрос своими словами.", reply_markup=kb.menu_for(message.from_user.id))
 
 
 @router.message(F.text.in_({kb.BTN_QUALIFY, kb.BTN_MANAGER, kb.LEGACY_TICKETS}))
 async def coming_soon(message: Message) -> None:
-    await message.answer(COMING_SOON, reply_markup=kb.MAIN_MENU)
+    await message.answer(COMING_SOON, reply_markup=kb.menu_for(message.from_user.id))
 
 
 @router.callback_query(F.data.in_({"cta:qualify", "cta:manager"}))
