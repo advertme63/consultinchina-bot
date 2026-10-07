@@ -13,6 +13,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 import database
 from config import config
+from keyboards import BTN_MATERIALS, LEGACY_DOCS
 from services.kb_ingest import KB_DIR, KB_SOURCES, ingest
 from states import AddFileStates, UploadStates
 
@@ -224,17 +225,33 @@ def _store_md(doc_key: str, filename: str, raw: bytes) -> None:
     target.write_bytes(raw)
 
 
-@router.message(Command("docs"))
-async def docs_list(message: Message) -> None:
+async def kb_documents_text() -> str:
     rows = await database.list_documents()
     if not rows:
-        await message.answer("В базе знаний нет документов.")
-        return
+        return "В базе знаний нет документов."
     lines = [f"<b>База знаний: {len(rows)} док., {sum(r['chunks'] for r in rows)} фрагм.</b>"]
     for r in rows:
         key = escape(r["doc_key"]) if r["doc_key"] else f"id {r['id']} (без ключа)"
         lines.append(f"• <b>{key}</b> — {escape(r['filename'])} · {r['version_date']:%d.%m.%Y} · {r['chunks']} фрагм.")
-    await message.answer("\n".join(lines))
+    return "\n".join(lines)
+
+
+@router.message(Command("docs"))
+async def docs_list(message: Message) -> None:
+    await message.answer(await kb_documents_text())
+
+
+@router.message(F.text.in_({BTN_MATERIALS, LEGACY_DOCS}))
+async def admin_materials(message: Message) -> None:
+    """Админу «📄 Материалы» — справочники, по которым отвечает бот, и презентации для пользователей."""
+    files = await database.list_files_library()
+    if files:
+        library = "\n".join(f"• {escape(f['title'])}" for f in files)
+    else:
+        library = "пусто — добавить: /add_file"
+    await message.answer(
+        f"{await kb_documents_text()}\n\n<b>Материалы для пользователей ({len(files)}):</b>\n{library}"
+    )
 
 
 @router.message(Command("delete_doc"))
