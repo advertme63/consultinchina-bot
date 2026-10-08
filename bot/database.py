@@ -240,13 +240,14 @@ async def search_hybrid(
     query_embedding: Optional[list[float]],
     query_text: str,
     limit: int = 8,
-    pool_size: int = 20,
+    pool_size: int = 40,
     fts_weight: float = 2.0,
     doc_keys: Optional[list[str]] = None,
 ) -> list[asyncpg.Record]:
     """Вектор + полнотекст (russian, слова через ИЛИ), объединение рангов RRF (k=60).
     Полнотекстовый ранг весит fts_weight: на длинных вопросах вектор voyage-3-lite уводит
     к общим фрагментам (тест 1 Э2: нужный фрагмент — 19-й по вектору, 1-й по тексту).
+    pool_size 40 (было 20): после Э3.5 фрагментов ~100, и с пулом 20 нужный фрагмент выпадал из векторного списка.
     query_embedding=None — только полнотекст (если Voyage недоступен). doc_keys — искать только в этих справочниках.
     Поля: id, doc_key, content, distance, vrank, frank, matched (совпавших слов запроса), n_lex, score."""
     emb = _embedding_to_pg(query_embedding) if query_embedding else None
