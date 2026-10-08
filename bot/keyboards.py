@@ -2,7 +2,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 
 BTN_ASK = "💬 Задать вопрос"
 BTN_QUALIFY = "📊 Подходит ли мне компания в Китае"
-BTN_MANAGER = "👤 Связаться с менеджером"
+BTN_MANAGER = "👤 Связаться со специалистом"
+# Прежняя надпись: у части пользователей в Telegram ещё старая клавиатура
+LEGACY_MANAGER = "👤 Связаться с менеджером"
 BTN_MATERIALS = "📄 Материалы"
 BTN_LIMIT = "ℹ️ Мой лимит"
 # Кнопки старого меню: у части пользователей клавиатура ещё прежняя
@@ -10,7 +12,7 @@ LEGACY_KB = "📚 Справочник"
 LEGACY_TICKETS = "✉️ Обращения"
 LEGACY_DOCS = "📄 Документы"
 
-MENU_TEXTS = {BTN_ASK, BTN_QUALIFY, BTN_MANAGER, BTN_MATERIALS, BTN_LIMIT, LEGACY_KB, LEGACY_TICKETS, LEGACY_DOCS}
+MENU_TEXTS = {BTN_ASK, BTN_QUALIFY, BTN_MANAGER, BTN_MATERIALS, BTN_LIMIT, LEGACY_KB, LEGACY_TICKETS, LEGACY_DOCS, LEGACY_MANAGER}
 
 MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
@@ -23,7 +25,7 @@ MAIN_MENU = ReplyKeyboardMarkup(
 )
 
 CTA_QUALIFY_TEXT = "📊 Проверить, подходит ли мне"
-CTA_MANAGER_TEXT = "👤 Связаться с менеджером"
+CTA_MANAGER_TEXT = "👤 Связаться со специалистом"
 CTA_REVIEW_TEXT = "👤 Разбор со специалистом"
 
 

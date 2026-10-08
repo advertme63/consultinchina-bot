@@ -55,7 +55,7 @@ async def start_order(message: Message, state: FSMContext, first_name: str | Non
     )
 
 
-@router.message(F.text.in_({kb.BTN_MANAGER, kb.LEGACY_TICKETS}))
+@router.message(F.text.in_({kb.BTN_MANAGER, kb.LEGACY_MANAGER, kb.LEGACY_TICKETS}))
 async def lead_from_menu(message: Message, state: FSMContext) -> None:
     await start_lead(message, state, message.from_user.first_name)
 
@@ -70,7 +70,7 @@ async def lead_from_button(callback: CallbackQuery, state: FSMContext) -> None:
 @router.message(LeadStates.phone, F.text == BTN_CANCEL)
 async def lead_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Хорошо, отменили. Если передумаете — кнопка «👤 Связаться с менеджером» в меню.", reply_markup=kb.MAIN_MENU)
+    await message.answer("Хорошо, отменили. Если передумаете — кнопка «👤 Связаться со специалистом» в меню.", reply_markup=kb.MAIN_MENU)
 
 
 @router.message(LeadStates.name, F.text, kb.is_not_menu_button, ~F.text.startswith("/"))
