@@ -7,7 +7,7 @@ SERVICES: dict[str, str] = {
     "accounting_switch": "переход на нашу бухгалтерию",
     "hk_company": "компания в Гонконге",
     "rep_office": "представительство",
-    "export_license": "экспортная лицензия",
+    "export_license": "регистрация экспортёра",
     "alipay_wechat": "Alipay + WeChat Pay",
     "sourcing_express": "экспресс-подбор поставщиков",
     "sourcing_pro": "расширенный подбор поставщиков",
