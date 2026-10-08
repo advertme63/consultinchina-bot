@@ -267,6 +267,17 @@ async def replace_library_file(file_id: int, filename: str, storage_path: str) -
         )
 
 
+async def delete_library_file(file_id: int) -> Optional[asyncpg.Record]:
+    """Удаляет запись; возвращает её и признак, используется ли тот же файл другой записью."""
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow("DELETE FROM files_library WHERE id = $1 RETURNING *", file_id)
+            if not row:
+                return None
+            shared = await conn.fetchval("SELECT count(*) FROM files_library WHERE storage_path = $1", row["storage_path"])
+    return {"row": row, "shared": shared > 0}
+
+
 async def set_library_tg_file_id(file_id: int, tg_file_id: Optional[str]) -> None:
     async with pool().acquire() as conn:
         await conn.execute("UPDATE files_library SET tg_file_id = $2 WHERE id = $1", file_id, tg_file_id)

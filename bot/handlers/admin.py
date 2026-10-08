@@ -252,7 +252,7 @@ async def admin_materials(message: Message) -> None:
     if files:
         library = "\n".join(
             f"• #{f['id']} · №{f['sort_order'] if f['sort_order'] is not None else '—'} · {escape(f['title'])}" for f in files
-        ) + "\n\nКак видит клиент: /materials · добавить: /add_file · править: /edit_file <id>"
+        ) + "\n\nКак видит клиент: /materials · добавить: /add_file · править: /edit_file <id> · удалить: /delete_file <id>"
     else:
         library = "пусто — добавить: /add_file"
     await message.answer(
@@ -430,6 +430,50 @@ async def edit_file_value(message: Message, state: FSMContext) -> None:
     await state.clear()
     await database.update_library_file(data["edit_id"], field, value)
     await message.answer("Сохранено.\n\n" + _file_card(await database.get_library_file(data["edit_id"])))
+
+
+@router.message(Command("delete_file"))
+async def delete_file_ask(message: Message, state: FSMContext) -> None:
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Использование: /delete_file <id> — id видно в «📄 Материалы».")
+        return
+    row = await database.get_library_file(int(parts[1]))
+    if not row:
+        await message.answer("Материала с таким id нет.")
+        return
+    await state.clear()
+    await message.answer(
+        "Удалить материал? Запись и файл на сервере будут удалены без возможности восстановления.\n\n" + _file_card(row),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"fdel:{row['id']}:yes"),
+            InlineKeyboardButton(text="Отмена", callback_data=f"fdel:{row['id']}:no"),
+        ]]),
+    )
+
+
+@router.callback_query(F.data.regexp(r"^fdel:\d+:(yes|no)$"))
+async def delete_file_confirm(callback: CallbackQuery) -> None:
+    _, fid, answer = callback.data.split(":")
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if answer == "no":
+        await callback.message.answer("Удаление отменено.")
+        return
+    res = await database.delete_library_file(int(fid))
+    if not res:
+        await callback.message.answer("Материала уже нет.")
+        return
+    row, note = res["row"], ""
+    path = Path(row["storage_path"])
+    if res["shared"]:
+        note = " Файл на сервере оставлен: его использует другая запись."
+    elif path.resolve().parent == LIBRARY_DIR.resolve() and path.exists():
+        path.unlink()
+        note = " Файл на сервере удалён."
+    else:
+        note = " Файла на сервере не было."
+    await callback.message.answer(f"Материал #{row['id']} «{escape(row['title'])}» удалён.{note}")
 
 
 @router.message(EditFileStates.file, F.document)
