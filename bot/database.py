@@ -242,11 +242,12 @@ async def search_hybrid(
     limit: int = 8,
     pool_size: int = 20,
     fts_weight: float = 2.0,
+    doc_keys: Optional[list[str]] = None,
 ) -> list[asyncpg.Record]:
     """Вектор + полнотекст (russian, слова через ИЛИ), объединение рангов RRF (k=60).
     Полнотекстовый ранг весит fts_weight: на длинных вопросах вектор voyage-3-lite уводит
     к общим фрагментам (тест 1 Э2: нужный фрагмент — 19-й по вектору, 1-й по тексту).
-    query_embedding=None — только полнотекст (если Voyage недоступен).
+    query_embedding=None — только полнотекст (если Voyage недоступен). doc_keys — искать только в этих справочниках.
     Поля: id, doc_key, content, distance, vrank, frank, matched (совпавших слов запроса), n_lex, score."""
     emb = _embedding_to_pg(query_embedding) if query_embedding else None
     async with pool().acquire() as conn:
@@ -258,8 +259,8 @@ async def search_hybrid(
             ),
             vec AS (
                 SELECT c.id, row_number() OVER (ORDER BY c.embedding <=> $1::vector) AS rnk
-                FROM chunks c
-                WHERE $1::vector IS NOT NULL
+                FROM chunks c JOIN documents dv ON dv.id = c.document_id
+                WHERE $1::vector IS NOT NULL AND ($6::text[] IS NULL OR dv.doc_key = ANY($6::text[]))
                 ORDER BY c.embedding <=> $1::vector
                 LIMIT $4
             ),
@@ -267,8 +268,8 @@ async def search_hybrid(
                 SELECT c.id,
                        cardinality(ARRAY(SELECT unnest(tsvector_to_array(c.tsv)) INTERSECT SELECT unnest(q.lex))) AS matched,
                        row_number() OVER (ORDER BY ts_rank_cd(c.tsv, q.qs::tsquery) DESC) AS rnk
-                FROM chunks c, q
-                WHERE q.qs <> '' AND c.tsv @@ q.qs::tsquery
+                FROM chunks c JOIN documents df ON df.id = c.document_id, q
+                WHERE q.qs <> '' AND c.tsv @@ q.qs::tsquery AND ($6::text[] IS NULL OR df.doc_key = ANY($6::text[]))
                 ORDER BY rnk
                 LIMIT $4
             )
@@ -290,6 +291,7 @@ async def search_hybrid(
             limit,
             pool_size,
             fts_weight,
+            doc_keys,
         )
 
 
@@ -404,9 +406,13 @@ async def save_unanswered(telegram_id: int, question: str, bot_answer: str) -> N
 
 
 async def log_event(telegram_id: Optional[int], event_type: str, payload: Optional[str] = None) -> None:
+    """Сегмент пользователя на момент события пишется в каждое событие (Э3.5)."""
     async with pool().acquire() as conn:
         await conn.execute(
-            "INSERT INTO events (telegram_id, type, payload) VALUES ($1, $2, $3::jsonb)",
+            """
+            INSERT INTO events (telegram_id, type, payload, segment)
+            VALUES ($1, $2, $3::jsonb, (SELECT segment FROM users WHERE telegram_id = $1))
+            """,
             telegram_id,
             event_type,
             payload,
@@ -472,13 +478,20 @@ async def recent_lead(telegram_id: int, hours: int = 24) -> Optional[asyncpg.Rec
 
 
 async def create_lead(
-    telegram_id: int, name: str, phone: Optional[str], answers: Optional[str], verdict: Optional[str], summary: str
+    telegram_id: int,
+    name: str,
+    phone: Optional[str],
+    answers: Optional[str],
+    verdict: Optional[str],
+    summary: str,
+    segment: Optional[str] = None,
 ) -> int:
     async with pool().acquire() as conn:
         return await conn.fetchval(
             """
-            INSERT INTO leads (telegram_id, name, phone, answers, verdict, summary)
-            VALUES ($1, $2, $3, $4::jsonb, $5, $6) RETURNING id
+            INSERT INTO leads (telegram_id, name, phone, answers, verdict, summary, segment)
+            VALUES ($1, $2, $3, $4::jsonb, $5, $6, COALESCE($7, (SELECT segment FROM users WHERE telegram_id = $1)))
+            RETURNING id
             """,
             telegram_id,
             name,
@@ -486,18 +499,21 @@ async def create_lead(
             answers,
             verdict,
             summary,
+            segment,
         )
 
 
 async def update_lead_contact(
     lead_id: int, name: str, phone: Optional[str], answers: Optional[str], verdict: Optional[str]
 ) -> None:
-    """Повторная заявка: обновляем контакт и, если есть новая квалификация, её итог."""
+    """Повторная заявка: обновляем контакт и, если есть новая квалификация, её итог и сегмент."""
     async with pool().acquire() as conn:
         await conn.execute(
             """
             UPDATE leads SET name = $2, phone = COALESCE($3, phone),
-                answers = COALESCE($4::jsonb, answers), verdict = COALESCE($5, verdict), updated_at = now()
+                answers = COALESCE($4::jsonb, answers), verdict = COALESCE($5, verdict),
+                segment = COALESCE((SELECT u.segment FROM users u WHERE u.telegram_id = leads.telegram_id), segment),
+                updated_at = now()
             WHERE id = $1
             """,
             lead_id,
@@ -539,3 +555,42 @@ async def recent_messages(telegram_id: int, limit: int = 10) -> list[asyncpg.Rec
             limit,
         )
     return list(reversed(rows))
+
+
+# --- segments (Э3.5) ------------------------------------------------------------
+
+async def set_segment(telegram_id: int, segment: str) -> None:
+    async with pool().acquire() as conn:
+        await conn.execute("UPDATE users SET segment = $2 WHERE telegram_id = $1", telegram_id, segment)
+
+
+# --- marketplace commissions (Э3.5) ---------------------------------------------
+
+COMMISSION_COLUMNS = (
+    "button", "wb_category", "wb_rf_pct", "wb_cn_pct", "wb_source", "wb_date",
+    "ozon_category", "ozon_rf_pct", "ozon_cn_pct", "ozon_rf_source", "ozon_rf_date",
+    "ozon_cn_source", "ozon_cn_date", "note",
+)
+
+
+async def replace_commissions(rows: list[dict]) -> None:
+    """Полная замена таблицы в одной транзакции."""
+    cols = ("position",) + COMMISSION_COLUMNS
+    placeholders = ", ".join(f"${i + 1}" for i in range(len(cols)))
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("DELETE FROM mp_commissions")
+            await conn.executemany(
+                f"INSERT INTO mp_commissions ({', '.join(cols)}) VALUES ({placeholders})",
+                [tuple(r[c] for c in cols) for r in rows],
+            )
+
+
+async def list_commissions() -> list[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        return await conn.fetch("SELECT * FROM mp_commissions ORDER BY position")
+
+
+async def get_commission(button: str) -> Optional[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM mp_commissions WHERE button = $1", button)

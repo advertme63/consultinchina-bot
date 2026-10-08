@@ -11,7 +11,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 import database
 from config import config
 from services.claude_client import ask_claude_text
-from services.qualify import VERDICT_LABELS, answers_line
+from services.segments import SEGMENTS, VERDICT_LABELS, answers_line, segment_of_verdict
 
 logger = logging.getLogger(__name__)
 
@@ -102,18 +102,21 @@ def card_text(
     summary: str,
     questions: list[str],
     test: bool = False,
+    segment: Optional[str] = None,
 ) -> str:
     username = f"@{escape(user['username'])}" if user.get("username") else "без username"
     contact = " · ".join(
         p for p in (escape(name), username, f"ID {user['telegram_id']}", escape(phone) if phone else None) if p
     )
     lines = [
-        ("🧪 <b>ТЕСТ</b> · " if test else "") + f"🆕 <b>Заявка #{lead_id}</b> · источник: {escape(user.get('source') or '—')}",
+        ("🧪 <b>ТЕСТ</b> · " if test else "") + f"🆕 <b>Заявка #{lead_id}</b> · "
+        + (f"{SEGMENTS[segment].label} · " if segment in SEGMENTS else "")
+        + f"источник: {escape(user.get('source') or '—')}",
         f"Имя: {contact}",
         f"Итог квалификации: «{VERDICT_LABELS[verdict]}»" if verdict else "Итог квалификации: не проходил",
     ]
     if answers:
-        lines.append(escape(answers_line(answers)))
+        lines.append(escape(answers_line(answers, segment or "seller")))
     lines.append(f"\n<b>Суть диалога (ИИ):</b>\n{escape(summary)}")
     if questions:
         lines.append("\n<b>Последние вопросы:</b>\n" + "\n".join(f"• {escape(q)}" for q in questions))
@@ -127,6 +130,8 @@ async def submit_lead(bot: Bot, user: dict, name: str, phone: Optional[str], tes
     payload = json.loads(q["payload"]) if q and isinstance(q["payload"], str) else (q["payload"] if q else None)
     answers = payload.get("answers") if payload else None
     verdict = payload.get("verdict") if payload else None
+    # сегмент — из квалификации, на которой основана заявка; иначе — выбранный пользователем
+    segment = (payload.get("segment") if payload else None) or segment_of_verdict(verdict) or user["segment"]
     answers_json = json.dumps(answers, ensure_ascii=False) if answers else None
     questions = await last_questions(uid)
 
@@ -143,8 +148,8 @@ async def submit_lead(bot: Bot, user: dict, name: str, phone: Optional[str], tes
         return old["id"]
 
     summary = await dialog_summary(uid)
-    lead_id = await database.create_lead(uid, name, phone, answers_json, verdict, summary)
-    text = card_text(lead_id, user, name, phone, answers, verdict, summary, questions, test=test)
+    lead_id = await database.create_lead(uid, name, phone, answers_json, verdict, summary, segment)
+    text = card_text(lead_id, user, name, phone, answers, verdict, summary, questions, test=test, segment=segment)
     sent = await send_to_group(bot, text, reply_markup=take_keyboard(lead_id))
     if sent:
         await database.set_lead_group_message(lead_id, sent.message_id)

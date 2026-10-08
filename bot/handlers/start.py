@@ -8,6 +8,7 @@ from aiogram.types import Message
 
 import database
 from config import config
+from handlers.qualify import ask_segment
 from keyboards import MAIN_MENU
 
 router = Router()
@@ -36,3 +37,6 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         f"{config.DAILY_LIMIT_CLIENT}. Мы сохраняем вопросы и ответы, чтобы бот отвечал точнее.",
         reply_markup=MAIN_MENU,
     )
+    user = await database.get_user(message.from_user.id)
+    if user and not user["segment"]:
+        await ask_segment(message, state, "start")
