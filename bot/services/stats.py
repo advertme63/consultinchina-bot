@@ -55,6 +55,7 @@ class Stats:
     cost_total: float = 0.0
     cost_tests: float = 0.0
     cost_admin: float = 0.0
+    cost_system: float = 0.0  # вызовы без пользователя: сводка 19:00, анализ недели
     warnings: list = field(default_factory=list)
 
     @property
@@ -121,9 +122,11 @@ async def collect(start: datetime, end: datetime, title: str, scope: str = "real
         cost = await conn.fetchrow(f"""
             SELECT COALESCE(sum(l.cost_usd), 0) total,
                    COALESCE(sum(l.cost_usd) FILTER (WHERE l.telegram_id < 0 OR u.source = 'test'), 0) tests,
-                   COALESCE(sum(l.cost_usd) FILTER (WHERE l.telegram_id = {int(config.ADMIN_TELEGRAM_ID)}), 0) admin
+                   COALESCE(sum(l.cost_usd) FILTER (WHERE l.telegram_id = {int(config.ADMIN_TELEGRAM_ID)}), 0) admin,
+                   COALESCE(sum(l.cost_usd) FILTER (WHERE l.telegram_id IS NULL), 0) system
             FROM llm_usage l LEFT JOIN users u USING (telegram_id) WHERE {wa("l")}""", start, end)
         s.cost_total, s.cost_tests, s.cost_admin = float(cost["total"]), float(cost["tests"]), float(cost["admin"])
+        s.cost_system = float(cost["system"])
     return s
 
 
@@ -133,7 +136,8 @@ def _join(d: dict, fmt=lambda k: k) -> str:
 
 def render(s: Stats) -> str:
     cost = f"~${s.cost_total:.2f}" + (
-        f" (из них тесты ${s.cost_tests:.2f}, админ ${s.cost_admin:.2f})" if s.cost_tests or s.cost_admin else ""
+        f" (из них тесты ${s.cost_tests:.2f}, админ ${s.cost_admin:.2f}, служебные ${s.cost_system:.2f})"
+        if s.cost_tests or s.cost_admin or s.cost_system else ""
     )
     if s.is_empty:
         line = f"📊 {s.title} — активности не было · расход Claude {cost}"
