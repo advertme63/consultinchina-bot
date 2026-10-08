@@ -54,7 +54,7 @@ async def order_click(callback: CallbackQuery, state: FSMContext) -> None:
     _, service, mid = callback.data.split(":")
     await callback.answer()
     if service not in SERVICES:
-        await callback.message.answer("Эта кнопка устарела. Напишите, какая услуга нужна, — передадим Валерию Загурскому.")
+        await callback.message.answer("Эта кнопка устарела. Напишите, какая услуга нужна, — передадим нашему специалисту.")
         return
     await start_order(callback.message, state, callback.from_user.first_name, service, int(mid))
 

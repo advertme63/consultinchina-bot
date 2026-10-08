@@ -178,7 +178,7 @@ async def verdict_message(segment: str, answers: dict, v: str, user_id: int | No
         text, _, _ = await verdict_text(segment, answers, v, user_id)
     except Exception:
         logger.exception("verdict_text failed")
-        text = f"**{seg.labels[v]}**\n\nПодробно разберём вашу ситуацию с Валерием Загурским — кнопка ниже."
+        text = f"**{seg.labels[v]}**\n\nПодробно разберём вашу ситуацию с нашим специалистом — кнопка ниже."
     try:
         block = await python_block(segment, v, answers)
     except Exception:

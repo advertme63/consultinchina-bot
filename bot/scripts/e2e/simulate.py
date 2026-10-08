@@ -260,6 +260,12 @@ class FakeSession(BaseSession):
                     entry["reply_to"] = rp.message_id
                 elif isinstance(getattr(method, "reply_to_message_id", None), int):
                     entry["reply_to"] = method.reply_to_message_id
+            if (isinstance(method, SendMessage) and entry.get("reply_to") and entry["target"] in ("LEADS_GROUP", "REPORTS_GROUP")
+                    and (chat_id, entry["reply_to"]) not in sim.messages):
+                # как настоящий Telegram: ответ на удалённое / несуществующее сообщение группы
+                entry["telegram_error"] = "Bad Request: message to be replied not found"
+                sim.record(entry)
+                raise TelegramBadRequest(method=method, message=entry["telegram_error"])
             if err:
                 entry["telegram_error"] = f"Bad Request: can't parse entities: {err}"
                 sim.record(entry)
@@ -423,6 +429,13 @@ class Simulator:
                     blocked.append(f"httpx: {e}")
                 del Stats.telegram_network_attempts[n_before:]  # пробы — не нарушения бота
                 action = {"type": "guard_probe", "blocked": blocked, "ok": len(blocked) == 2}
+            elif "delete_group_messages" in step:
+                # «Иван удалил карточки в группе»: симулятор забывает сообщения бота в этой группе
+                chat = self.leads_chat if step["delete_group_messages"] == "leads" else self.reports_chat
+                gone = [k for k in self.messages if k[0] == chat]
+                for k in gone:
+                    del self.messages[k]
+                action = {"type": "delete_group_messages", "group": step["delete_group_messages"], "deleted": len(gone)}
             elif "note" in step:
                 action = {"type": "note", "text": step["note"]}
             else:

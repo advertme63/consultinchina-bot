@@ -22,7 +22,7 @@ router.message.filter(F.chat.type == "private")
 
 LIMIT_EXHAUSTED = (
     "Лимит на сегодня исчерпан, он обновится в 00:00 по Шанхаю. "
-    "Если вопрос срочный — оставьте контакт, Валерий Загурский ответит лично."
+    "Если вопрос срочный — оставьте контакт, наш специалист ответит лично."
 )
 
 
@@ -89,7 +89,8 @@ async def ask_and_reply(bot: Bot, chat_id: int, uid: int, user: Optional[dict], 
         result.message_id, result.intent, result.cta, result.service, result.suggestions,
         result.force_manager, result.answered_from_kb,
     )
-    await send_answer(bot, chat_id, result.answer, footer, markup)
+    text = result.answer + (f"\n\n{kb.disclaimer_for(markup)}" if result.disclaimer else "")
+    await send_answer(bot, chat_id, text, footer, markup)
 
 
 @router.message(F.text, ~F.text.startswith("/"))

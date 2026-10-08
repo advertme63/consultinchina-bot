@@ -1,4 +1,4 @@
-"""Заявка Валерию Загурскому (ТЗ 6.3): имя → телефон → карточка в «CinC Лиды». В лимит не входит."""
+"""Заявка нашему специалисту (ТЗ 6.3): имя → телефон → карточка в «CinC Лиды». В лимит не входит."""
 import logging
 from html import escape
 
@@ -41,7 +41,7 @@ async def start_lead(message: Message, state: FSMContext, first_name: str | None
     await state.clear()
     await state.set_state(LeadStates.name)
     await message.answer(
-        "Передадим ваш вопрос Валерию Загурскому. Как к вам обращаться?", reply_markup=name_keyboard(first_name)
+        "Передадим ваш вопрос нашему специалисту. Как к вам обращаться?", reply_markup=name_keyboard(first_name)
     )
 
 
@@ -78,7 +78,7 @@ async def lead_name(message: Message, state: FSMContext) -> None:
     await state.update_data(name=message.text.strip()[:100])
     await state.set_state(LeadStates.phone)
     await message.answer(
-        "Оставьте телефон — или нажмите «Пропустить», Валерию достаточно вашего Telegram.", reply_markup=PHONE_KEYBOARD
+        "Оставьте телефон — или нажмите «Пропустить», специалисту достаточно вашего Telegram.", reply_markup=PHONE_KEYBOARD
     )
 
 

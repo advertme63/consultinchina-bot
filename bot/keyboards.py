@@ -24,7 +24,7 @@ MAIN_MENU = ReplyKeyboardMarkup(
 
 CTA_QUALIFY_TEXT = "📊 Проверить, подходит ли мне"
 CTA_MANAGER_TEXT = "👤 Связаться с менеджером"
-CTA_REVIEW_TEXT = "👤 Разбор с Валерием Загурским"
+CTA_REVIEW_TEXT = "👤 Разбор со специалистом"
 
 
 def cta_keyboard(intent: str, cta: str, force_manager: bool = False) -> InlineKeyboardMarkup | None:
@@ -37,7 +37,7 @@ def cta_keyboard(intent: str, cta: str, force_manager: bool = False) -> InlineKe
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
-QUESTION_VALERY_TEXT = "👤 Вопрос Валерию"
+QUESTION_SPECIALIST_TEXT = "👤 Вопрос специалисту"
 ORDER_PREFIX = "📝 Заказать: "
 SUGGESTION_PREFIX = "💬 "
 
@@ -65,7 +65,7 @@ def answer_keyboard(
     elif service and service != "none" and service_title(service):
         action.append(InlineKeyboardButton(text=ORDER_PREFIX + service_title(service),
                                            callback_data=f"order:{service}:{message_id}"))
-        action.append(InlineKeyboardButton(text=QUESTION_VALERY_TEXT, callback_data="cta:manager"))
+        action.append(InlineKeyboardButton(text=QUESTION_SPECIALIST_TEXT, callback_data="cta:manager"))
     else:
         if intent == "wants_calc" or cta == "qualify":
             action.append(InlineKeyboardButton(text=CTA_QUALIFY_TEXT, callback_data="cta:qualify"))
@@ -82,6 +82,23 @@ def answer_keyboard(
             InlineKeyboardButton(text="👎", callback_data=f"rate:{message_id}:-1"),
         ])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+DISCLAIMER_WITH_ACTION = "Это общая информация. Решение по вашей ситуации — с нашим специалистом, кнопка ниже."
+DISCLAIMER_WITH_SUGGESTIONS = "Это общая информация. Ниже — похожие вопросы по теме."
+DISCLAIMER_PLAIN = "Это общая информация — ваша ситуация может отличаться."
+
+
+def disclaimer_for(markup: InlineKeyboardMarkup | None) -> str:
+    """Концовка юридического / налогового ответа по раскладке кнопок (решение Ивана 08.10)."""
+    rows = markup.inline_keyboard if markup else []
+    has_action = any(b.callback_data.startswith(("cta:", "order:")) for r in rows for b in r)
+    has_suggestions = any(b.callback_data.startswith("sug:") for r in rows for b in r)
+    if has_action:
+        return DISCLAIMER_WITH_ACTION
+    if has_suggestions:
+        return DISCLAIMER_WITH_SUGGESTIONS
+    return DISCLAIMER_PLAIN
 
 
 def keyboard_for_message(row, show_suggestions: bool = True, show_rating: bool = True) -> InlineKeyboardMarkup | None:

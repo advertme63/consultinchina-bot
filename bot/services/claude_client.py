@@ -1,4 +1,5 @@
 """Один вызов Claude со структурированным ответом через tool use (ТЗ 4.2, 4.5)."""
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -15,6 +16,8 @@ INTENTS = ("question", "wants_calc", "wants_human", "off_topic")
 CTAS = ("none", "qualify", "manager")
 MAX_SUGGESTIONS = 2
 MAX_SUGGESTION_CHARS = 50
+# Концовку «Это общая информация…» добавляет код по раскладке кнопок; если модель всё же написала её — срезаем
+_DISCLAIMER_TAIL_RE = re.compile(r"\n\s*(?:\*\*)?Это общая информация[^\n]*\s*$", re.I)
 
 REPLY_TOOL = {
     "name": "reply",
@@ -34,6 +37,10 @@ REPLY_TOOL = {
                 "enum": list(SERVICES) + ["none"],
                 "description": "Ключ услуги, ТОЛЬКО если клиент спрашивает о цене, составе или заказе конкретной услуги; иначе none.",
             },
+            "disclaimer": {
+                "type": "boolean",
+                "description": "true — ответ юридический, налоговый или про требования госорганов: бот сам добавит оговорку «это общая информация». Текст оговорки в answer не писать.",
+            },
             "suggestions": {
                 "type": "array",
                 "maxItems": MAX_SUGGESTIONS,
@@ -41,7 +48,7 @@ REPLY_TOOL = {
                 "description": "0–2 коротких вопроса от лица клиента — что он логично спросит дальше; только по темам из фрагментов, без продажи.",
             },
         },
-        "required": ["answer", "answered_from_kb", "intent", "cta", "service", "suggestions"],
+        "required": ["answer", "answered_from_kb", "intent", "cta", "service", "disclaimer", "suggestions"],
     },
 }
 
@@ -58,6 +65,7 @@ class ClaudeReply:
     cache_write: int
     service: str = "none"
     suggestions: list = None
+    disclaimer: bool = False
     usage: "usage_mod.Usage" = None
 
 
@@ -104,6 +112,10 @@ async def ask_claude(
     if not answer:
         raise RuntimeError(f"Claude не вернул ответ (stop_reason={message.stop_reason})")
     service = data.get("service") if data.get("service") in SERVICES else "none"
+    disclaimer = bool(data.get("disclaimer", False))
+    m = _DISCLAIMER_TAIL_RE.search(answer)
+    if m and m.start() > 0:
+        answer, disclaimer = answer[: m.start()].rstrip(), True
     return ClaudeReply(
         answer=answer,
         answered_from_kb=bool(data.get("answered_from_kb", False)),
@@ -115,6 +127,7 @@ async def ask_claude(
         cache_write=u.cache_write_5m + u.cache_write_1h,
         service=service,
         suggestions=_clean_suggestions(data.get("suggestions")),
+        disclaimer=disclaimer,
         usage=u,
     )
 

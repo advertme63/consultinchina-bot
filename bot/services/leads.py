@@ -5,6 +5,7 @@ from html import escape
 from typing import Optional
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import database
@@ -16,7 +17,7 @@ from services.segments import SEGMENTS, VERDICT_LABELS, answers_line, segment_of
 
 logger = logging.getLogger(__name__)
 
-CLIENT_THANKS = "Спасибо! Валерий Загурский напишет вам в Telegram в рабочее время (Шанхай, UTC+8)."
+CLIENT_THANKS = "Спасибо! Наш специалист напишет вам в Telegram в рабочее время (Шанхай, UTC+8)."
 
 
 async def leads_chat_id() -> Optional[int]:
@@ -28,6 +29,24 @@ async def send_to_group(bot: Bot, text: str, **kwargs) -> Optional[Message]:
     return await notify.send_to_group(bot, "leads", text, **kwargs)
 
 
+async def reply_or_new_card(bot: Bot, old, reply_text: str, full_card: str) -> Optional[Message]:
+    """Повтор заявки: ответ на старую карточку. Если её удалили в группе («message to be replied not found») —
+    полная новая карточка без reply, group_message_id обновляется; админу ошибку не шлём (это не сбой)."""
+    try:
+        return await notify.send_to_group(bot, "leads", reply_text, raise_bad_markup=True,
+                                          reply_to_message_id=old["group_message_id"])
+    except TelegramBadRequest as e:
+        if "replied not found" not in str(e).lower() and "reply message not found" not in str(e).lower():
+            logger.exception("Повтор заявки #%s: ошибка отправки", old["id"])
+            await notify.notify_admin(bot, f"⚠️ Не удалось отправить повтор заявки #{old['id']} в группу лидов ({e}).")
+            return None
+        logger.info("Карточка заявки #%s удалена в группе — отправляю новую полную", old["id"])
+        sent = await send_to_group(bot, full_card, reply_markup=take_keyboard(old["id"]))
+        if sent:
+            await database.set_lead_group_message(old["id"], sent.message_id)
+        return sent
+
+
 async def dialog_summary(telegram_id: int) -> str:
     rows = await database.recent_messages(telegram_id, 10)
     if not rows:
@@ -37,7 +56,7 @@ async def dialog_summary(telegram_id: int) -> str:
 
     dialog = "\n\n".join(f"Клиент: {cut(r['question'], 500)}\nБот: {cut(r['answer'] or '', 800)}" for r in rows)
     prompt = (
-        "Ниже — переписка клиента с ботом Consult in China. Сделай для Валерия Загурского резюме в 3–5 коротких "
+        "Ниже — переписка клиента с ботом Consult in China. Сделай для специалиста Consult in China резюме в 3–5 коротких "
         "строк: что клиенту нужно, его ситуация и цифры, если он их называл, что уже ответил бот. "
         "Без приветствий, без оценок клиента, без рекомендаций по продаже. Просто текст, без разметки. "
         "Длинные ответы бота сокращены здесь и помечены […] — это не обрыв, не упоминай это.\n\n"
@@ -113,7 +132,9 @@ async def submit_lead(bot: Bot, user: dict, name: str, phone: Optional[str], tes
             parts.append(f"Итог квалификации: «{VERDICT_LABELS[verdict]}»")
         if questions:
             parts.append("Последние вопросы:\n" + "\n".join(f"• {escape(x)}" for x in questions))
-        await send_to_group(bot, "\n".join(parts), reply_to_message_id=old["group_message_id"])
+        full = "🔁 <b>Клиент снова написал</b> (прежняя карточка удалена)\n" + card_text(
+            old["id"], user, name, phone, answers, verdict, old["summary"] or "—", questions, segment=segment)
+        await reply_or_new_card(bot, old, "\n".join(parts), full)
         await database.log_event(uid, "lead", json.dumps({"lead_id": old["id"], "repeat": True}))
         return old["id"]
 
@@ -168,7 +189,9 @@ async def submit_order(
             f"Имя: {escape(name)}" + (f" · {escape(phone)}" if phone else ""),
             f"Вопрос клиента: {escape(question) if question else ORDER_NO_QUESTION}",
         ]
-        await send_to_group(bot, "\n".join(parts), reply_to_message_id=old["group_message_id"])
+        full = "🔁 <b>Клиент снова написал</b> (прежняя карточка удалена)\n" + order_card_text(
+            old["id"], user, name, phone, service, question, old["summary"] or "—", segment)
+        await reply_or_new_card(bot, old, "\n".join(parts), full)
         await database.log_event(uid, "order", json.dumps({"service": service, "message_id": message_id,
                                                             "lead_id": old["id"], "repeat": True}))
         return old["id"]

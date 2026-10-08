@@ -65,6 +65,7 @@ class AnswerResult:
     service: str = "none"
     suggestions: list = field(default_factory=list)
     cost_usd: float = 0.0
+    disclaimer: bool = False
 
 
 async def _embed(question: str) -> Optional[list[float]]:
@@ -161,4 +162,5 @@ async def answer_question(telegram_id: int, question: str) -> AnswerResult:
         service=service,
         suggestions=suggestions,
         cost_usd=u.cost_usd,
+        disclaimer=reply.disclaimer,
     )
