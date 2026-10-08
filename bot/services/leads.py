@@ -5,57 +5,27 @@ from html import escape
 from typing import Optional
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramMigrateToChat
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import database
 from config import config
+from services import notify
+from services.catalog import service_title
 from services.claude_client import ask_claude_text
 from services.segments import SEGMENTS, VERDICT_LABELS, answers_line, segment_of_verdict
 
 logger = logging.getLogger(__name__)
 
-LEADS_CHAT_KEY = "leads_chat_id"
 CLIENT_THANKS = "Спасибо! Валерий Загурский напишет вам в Telegram в рабочее время (Шанхай, UTC+8)."
 
 
 async def leads_chat_id() -> Optional[int]:
-    saved = await database.get_setting(LEADS_CHAT_KEY)
-    if saved:
-        return int(saved)
-    return config.LEADS_CHAT_ID
-
-
-async def _notify_admin(bot: Bot, text: str) -> None:
-    try:
-        await bot.send_message(config.ADMIN_TELEGRAM_ID, text, parse_mode=None)
-    except Exception:
-        logger.exception("Не удалось написать админу")
+    return await notify.chat_id_for("leads")
 
 
 async def send_to_group(bot: Bot, text: str, **kwargs) -> Optional[Message]:
-    """Отправка в группу лидов. Группа стала супергруппой → сохраняем новый ID в settings и повторяем.
-    Любая ошибка — в лог и админу в личку (ТЗ 6.4)."""
-    chat_id = await leads_chat_id()
-    if not chat_id:
-        logger.error("LEADS_CHAT_ID не задан, карточка не отправлена")
-        await _notify_admin(bot, "⚠️ LEADS_CHAT_ID не задан — заявка не ушла в группу:\n\n" + text)
-        return None
-    for attempt in range(2):
-        try:
-            return await bot.send_message(chat_id, text, **kwargs)
-        except TelegramMigrateToChat as e:
-            logger.warning("Группа лидов переехала: %s → %s", chat_id, e.migrate_to_chat_id)
-            chat_id = e.migrate_to_chat_id
-            await database.set_setting(LEADS_CHAT_KEY, str(chat_id))
-            await _notify_admin(bot, f"ℹ️ Группа лидов стала супергруппой, новый ID {chat_id} сохранён в settings.")
-        except Exception as e:
-            logger.exception("Не удалось отправить в группу лидов %s", chat_id)
-            await _notify_admin(
-                bot, f"⚠️ Не удалось отправить в группу лидов ({type(e).__name__}: {e}).\n\nТекст:\n{text[:3000]}"
-            )
-            return None
-    return None
+    """Отправка в «CinC Лиды» — через общий services/notify (migrate_to_chat_id, ошибки → админу)."""
+    return await notify.send_to_group(bot, "leads", text, **kwargs)
 
 
 async def dialog_summary(telegram_id: int) -> str:
@@ -74,7 +44,7 @@ async def dialog_summary(telegram_id: int) -> str:
         f"Переписка:\n{dialog}"
     )
     try:
-        text, _, _ = await ask_claude_text(prompt, max_tokens=300)
+        text, _, _ = await ask_claude_text(prompt, max_tokens=300, telegram_id=telegram_id, purpose="summary")
         return text
     except Exception:
         logger.exception("Не удалось получить резюме диалога")
@@ -154,4 +124,61 @@ async def submit_lead(bot: Bot, user: dict, name: str, phone: Optional[str], tes
     if sent:
         await database.set_lead_group_message(lead_id, sent.message_id)
     await database.log_event(uid, "lead", json.dumps({"lead_id": lead_id, "verdict": verdict, "test": test}))
+    return lead_id
+
+
+ORDER_NO_QUESTION = "исходный вопрос недоступен"
+
+
+def order_card_text(
+    lead_id: int, user: dict, name: str, phone: Optional[str], service: str, question: Optional[str],
+    summary: str, segment: Optional[str], test: bool = False,
+) -> str:
+    username = f"@{escape(user['username'])}" if user.get("username") else "без username"
+    contact = " · ".join(
+        p for p in (escape(name), username, f"ID {user['telegram_id']}", escape(phone) if phone else None) if p
+    )
+    title = service_title(service) or service
+    lines = [
+        ("🧪 <b>ТЕСТ</b> · " if test else "") + f"🛒 <b>Заказ: {escape(title)}</b> · заявка #{lead_id} · "
+        + (f"{SEGMENTS[segment].label} · " if segment in SEGMENTS else "")
+        + f"источник: {escape(user.get('source') or '—')}",
+        f"Имя: {contact}",
+        f"\n<b>Вопрос клиента:</b>\n{escape(question) if question else ORDER_NO_QUESTION}",
+        f"\n<b>Суть диалога (ИИ):</b>\n{escape(summary)}",
+    ]
+    return "\n".join(lines)
+
+
+async def submit_order(
+    bot: Bot, user: dict, name: str, phone: Optional[str], service: str, message_id: Optional[int], test: bool = False
+) -> int:
+    """Заказ через кнопку «📝 Заказать» (Э4): без квалификации. Повтор за 24 ч — ответ на любую прошлую карточку."""
+    uid = user["telegram_id"]
+    msg = await database.get_message(message_id) if message_id else None
+    question = msg["question"] if msg and msg["telegram_id"] == uid else None
+    title = service_title(service) or service
+    segment = user["segment"]
+
+    old = await database.recent_lead(uid)
+    if old:
+        await database.update_lead_contact(old["id"], name, phone, None, None)
+        parts = [
+            f"🔁 <b>Клиент снова написал: 🛒 Заказ: {escape(title)}</b> (заявка #{old['id']})",
+            f"Имя: {escape(name)}" + (f" · {escape(phone)}" if phone else ""),
+            f"Вопрос клиента: {escape(question) if question else ORDER_NO_QUESTION}",
+        ]
+        await send_to_group(bot, "\n".join(parts), reply_to_message_id=old["group_message_id"])
+        await database.log_event(uid, "order", json.dumps({"service": service, "message_id": message_id,
+                                                            "lead_id": old["id"], "repeat": True}))
+        return old["id"]
+
+    summary = await dialog_summary(uid)
+    lead_id = await database.create_lead(uid, name, phone, None, None, summary, segment, service)
+    text = order_card_text(lead_id, user, name, phone, service, question, summary, segment, test=test)
+    sent = await send_to_group(bot, text, reply_markup=take_keyboard(lead_id))
+    if sent:
+        await database.set_lead_group_message(lead_id, sent.message_id)
+    await database.log_event(uid, "order", json.dumps({"service": service, "message_id": message_id,
+                                                        "lead_id": lead_id, "test": test}))
     return lead_id

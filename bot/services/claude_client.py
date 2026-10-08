@@ -5,12 +5,16 @@ from typing import Optional
 from anthropic import AsyncAnthropic
 
 from config import config
+from services import usage as usage_mod
+from services.catalog import SERVICES
 from services.prompt import system_prompt
 
 _client: Optional[AsyncAnthropic] = None
 
 INTENTS = ("question", "wants_calc", "wants_human", "off_topic")
 CTAS = ("none", "qualify", "manager")
+MAX_SUGGESTIONS = 2
+MAX_SUGGESTION_CHARS = 50
 
 REPLY_TOOL = {
     "name": "reply",
@@ -25,8 +29,19 @@ REPLY_TOOL = {
             },
             "intent": {"type": "string", "enum": list(INTENTS)},
             "cta": {"type": "string", "enum": list(CTAS)},
+            "service": {
+                "type": "string",
+                "enum": list(SERVICES) + ["none"],
+                "description": "Ключ услуги, ТОЛЬКО если клиент спрашивает о цене, составе или заказе конкретной услуги; иначе none.",
+            },
+            "suggestions": {
+                "type": "array",
+                "maxItems": MAX_SUGGESTIONS,
+                "items": {"type": "string", "maxLength": MAX_SUGGESTION_CHARS},
+                "description": "0–2 коротких вопроса от лица клиента — что он логично спросит дальше; только по темам из фрагментов, без продажи.",
+            },
         },
-        "required": ["answer", "answered_from_kb", "intent", "cta"],
+        "required": ["answer", "answered_from_kb", "intent", "cta", "service", "suggestions"],
     },
 }
 
@@ -37,10 +52,13 @@ class ClaudeReply:
     answered_from_kb: bool
     intent: str
     cta: str
-    tokens_in: int
+    tokens_in: int  # весь вход (свежий + кеш) — для run_tests/e2e
     tokens_out: int
     cache_read: int
     cache_write: int
+    service: str = "none"
+    suggestions: list = None
+    usage: "usage_mod.Usage" = None
 
 
 def _get_client() -> AsyncAnthropic:
@@ -53,7 +71,18 @@ def _get_client() -> AsyncAnthropic:
     return _client
 
 
-async def ask_claude(history: list[dict], user_content: str) -> ClaudeReply:
+def _clean_suggestions(raw) -> list[str]:
+    out = []
+    for x in raw if isinstance(raw, list) else []:
+        t = " ".join(str(x).split())[:MAX_SUGGESTION_CHARS].strip()
+        if t and t not in out:
+            out.append(t)
+    return out[:MAX_SUGGESTIONS]
+
+
+async def ask_claude(
+    history: list[dict], user_content: str, telegram_id: Optional[int] = None, purpose: str = "answer"
+) -> ClaudeReply:
     client = _get_client()
     message = await client.messages.create(
         model=config.CLAUDE_MODEL,
@@ -63,31 +92,36 @@ async def ask_claude(history: list[dict], user_content: str) -> ClaudeReply:
         tool_choice={"type": "tool", "name": "reply"},
         messages=history + [{"role": "user", "content": user_content}],
     )
+    u = usage_mod.from_api(message.usage)
+    await usage_mod.record(u, purpose, telegram_id)
     data: dict = {}
     for block in message.content:
         if getattr(block, "type", None) == "tool_use" and block.name == "reply":
             data = block.input or {}
             break
-    u = message.usage
-    cache_read = getattr(u, "cache_read_input_tokens", 0) or 0
-    cache_write = getattr(u, "cache_creation_input_tokens", 0) or 0
     answer = str(data.get("answer") or "").strip()
     if not answer:
         raise RuntimeError(f"Claude не вернул ответ (stop_reason={message.stop_reason})")
+    service = data.get("service") if data.get("service") in SERVICES else "none"
     return ClaudeReply(
         answer=answer,
         answered_from_kb=bool(data.get("answered_from_kb", False)),
         intent=data.get("intent") if data.get("intent") in INTENTS else "question",
         cta=data.get("cta") if data.get("cta") in CTAS else "none",
-        tokens_in=u.input_tokens + cache_read + cache_write,
-        tokens_out=u.output_tokens,
-        cache_read=cache_read,
-        cache_write=cache_write,
+        tokens_in=u.total_in,
+        tokens_out=u.output,
+        cache_read=u.cache_read,
+        cache_write=u.cache_write_5m + u.cache_write_1h,
+        service=service,
+        suggestions=_clean_suggestions(data.get("suggestions")),
+        usage=u,
     )
 
 
-async def ask_claude_text(user_content: str, max_tokens: int = 600) -> tuple[str, int, int]:
-    """Свободный текст с тем же системным промптом (голос, стоп-лист, прайс). → (текст, токены вход, выход)."""
+async def ask_claude_text(
+    user_content: str, max_tokens: int = 600, telegram_id: Optional[int] = None, purpose: str = "text"
+) -> tuple[str, int, int]:
+    """Свободный текст с тем же системным промптом (голос, стоп-лист, прайс). → (текст, весь вход, выход)."""
     client = _get_client()
     message = await client.messages.create(
         model=config.CLAUDE_MODEL,
@@ -95,11 +129,9 @@ async def ask_claude_text(user_content: str, max_tokens: int = 600) -> tuple[str
         system=[{"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_content}],
     )
+    u = usage_mod.from_api(message.usage)
+    await usage_mod.record(u, purpose, telegram_id)
     text = "".join(b.text for b in message.content if getattr(b, "type", None) == "text").strip()
     if not text:
         raise RuntimeError(f"Claude не вернул текст (stop_reason={message.stop_reason})")
-    u = message.usage
-    tokens_in = u.input_tokens + (getattr(u, "cache_read_input_tokens", 0) or 0) + (
-        getattr(u, "cache_creation_input_tokens", 0) or 0
-    )
-    return text, tokens_in, u.output_tokens
+    return text, u.total_in, u.output

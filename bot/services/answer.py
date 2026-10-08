@@ -62,6 +62,9 @@ class AnswerResult:
     latency_ms: int = 0
     message_id: Optional[int] = None
     force_manager: bool = False
+    service: str = "none"
+    suggestions: list = field(default_factory=list)
+    cost_usd: float = 0.0
 
 
 async def _embed(question: str) -> Optional[list[float]]:
@@ -119,14 +122,22 @@ async def answer_question(telegram_id: int, question: str) -> AnswerResult:
         if q and a:  # пустое сообщение в истории ломает вызов Claude (400)
             history += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
 
-    reply = await ask_claude(history, _user_content(question, rows, relevant))
+    reply = await ask_claude(history, _user_content(question, rows, relevant), telegram_id, "answer")
     answered_from_kb = reply.answered_from_kb and relevant
     latency_ms = int((time.monotonic() - started) * 1000)
     doc_keys = list(dict.fromkeys(r["doc_key"] for r in rows if r["doc_key"])) if relevant else []
 
+    # Кнопки (Э4): «Заказать» и подсказки — только для ответа по базе на справочный вопрос
+    service = reply.service if answered_from_kb and reply.intent != "off_topic" else "none"
+    suggestions = (
+        reply.suggestions if service == "none" and reply.intent == "question" and answered_from_kb else []
+    )
+    u = reply.usage
     message_id = await database.save_message(
         telegram_id, question, reply.answer, doc_keys, best_distance, answered_from_kb,
-        reply.intent, reply.cta, reply.tokens_in, reply.tokens_out, latency_ms,
+        reply.intent, reply.cta, u.input, u.output, latency_ms,
+        u.cache_read, u.cache_write_5m, u.cache_write_1h,
+        None if service == "none" else service, suggestions or None,
     )
     # Пробел в базе — только справочные вопросы: «хочу человека» и вне темы в сводку не идут
     if not answered_from_kb and reply.intent not in NOT_KB_GAP_INTENTS:
@@ -147,4 +158,7 @@ async def answer_question(telegram_id: int, question: str) -> AnswerResult:
         latency_ms=latency_ms,
         message_id=message_id,
         force_manager=needs_manager_button(question),
+        service=service,
+        suggestions=suggestions,
+        cost_usd=u.cost_usd,
     )

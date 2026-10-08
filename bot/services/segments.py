@@ -250,7 +250,9 @@ async def _context(segment: str, verdict: str, a: dict) -> list[str]:
     return []
 
 
-async def verdict_text(segment: str, answers: dict, verdict: str) -> tuple[str, int, int]:
+async def verdict_text(
+    segment: str, answers: dict, verdict: str, telegram_id: int | None = None
+) -> tuple[str, int, int]:
     """Текст итога от Claude по правилу (ТЗ 6.2, Э3.5 раздел 6): до 100 слов, 1–2 фактора, стоп-лист."""
     seg = SEGMENTS[segment]
     label = seg.labels[verdict]
@@ -290,13 +292,15 @@ async def verdict_text(segment: str, answers: dict, verdict: str) -> tuple[str, 
         + f"- в конце ровно одно предложение, не повторяй его: {closing}\n"
         "- не вызывай инструменты, просто текст."
     )
-    text, tin, tout = await ask_claude_text(prompt, max_tokens=600)
+    text, tin, tout = await ask_claude_text(prompt, max_tokens=600, telegram_id=telegram_id, purpose="verdict")
     words = len(text.split())
     if words > MAX_WORDS:  # один повтор: длиннее лимита — просим сократить
         text2, tin2, tout2 = await ask_claude_text(
             prompt + f"\n\nПрошлый вариант получился {words} слов — это больше {MAX_WORDS}. Сократи до 80–90 слов, "
             "сохрани первую строку и финальное предложение.\n\nПрошлый вариант:\n" + text,
             max_tokens=600,
+            telegram_id=telegram_id,
+            purpose="verdict_retry",
         )
         text, tin, tout = text2, tin + tin2, tout + tout2
     return text, tin, tout

@@ -26,8 +26,9 @@ TESTS_FILE = Path("/app/docs/tests_e2.md")
 REPORT = Path(os.environ.get("E2_REPORT", "/report/e2_test_report.md"))
 VOYAGE_PAUSE = 21  # Voyage без карты: 3 запроса в минуту
 
-# Оценка стоимости, $ за 1 млн токенов (уровень Sonnet): вход / запись в кэш / чтение кэша / выход
-PRICE_IN, PRICE_CACHE_WRITE, PRICE_CACHE_READ, PRICE_OUT = 3.0, 3.75, 0.30, 15.0
+# Цены — из .env через config (USD за 1 млн): вход / запись в кеш 5 мин / чтение кеша / выход
+PRICE_IN, PRICE_CACHE_WRITE, PRICE_CACHE_READ, PRICE_OUT = (
+    config.PRICE_INPUT, config.PRICE_CACHE_WRITE_5M, config.PRICE_CACHE_READ, config.PRICE_OUTPUT)
 
 
 def load_tests() -> list[dict]:
@@ -143,7 +144,7 @@ async def main() -> None:
         f"- Вызовов Claude: {totals['calls']} · длительность {int(time.monotonic() - started)} с",
         f"- Токены: вход {totals['tin']} (из них чтение кэша {totals['cread']}, запись в кэш {totals['cwrite']}), "
         f"выход {totals['tout']}",
-        f"- Оценка стоимости по ценам уровня Sonnet (${PRICE_IN}/${PRICE_OUT} за 1 млн): ~${cost:.2f}",
+        f"- Стоимость по ценам из .env (${PRICE_IN}/${PRICE_OUT} за 1 млн вход/выход): ~${cost:.2f}",
         f"- В unanswered_questions записано: {len(unanswered)} — "
         + ("; ".join(f"тест {-1000 - u['telegram_id']}: «{u['question'][:60]}»" for u in unanswered) or "нет"),
         "",

@@ -58,8 +58,9 @@ from config import config
 ID_MIN, ID_MAX = -2099, -2001
 FAKE_TOKEN = "1000000001:E2E_FAKE_TOKEN_no_network_ever"
 BOT_USER = User(id=1000000001, is_bot=True, first_name="CinC E2E", username="cinc_e2e_bot")
-# Оценка стоимости: цены уровня Sonnet, $ за 1 млн токенов (как в отчётах Э2/Э3.5)
-PRICE_IN, PRICE_OUT, PRICE_CACHE_READ, PRICE_CACHE_WRITE = 3.0, 15.0, 0.30, 3.75
+# Стоимость: цены из .env (USD за 1 млн токенов)
+PRICE_IN, PRICE_OUT, PRICE_CACHE_READ, PRICE_CACHE_WRITE = (  # из .env через config
+    config.PRICE_INPUT, config.PRICE_OUTPUT, config.PRICE_CACHE_READ, config.PRICE_CACHE_WRITE_5M)
 VOYAGE_INTERVAL = 21.0  # бесплатный Voyage — 3 запроса в минуту; держим паузу, чтобы поиск не падал в полнотекст
 
 log = logging.getLogger("e2e")
@@ -306,6 +307,7 @@ class Simulator:
         self.user_msg_id = 1
         self.current: Optional[list] = None
         self.leads_chat: Optional[int] = None
+        self.reports_chat: Optional[int] = None
 
     # учёт исходящих
     def record(self, entry: dict) -> None:
@@ -319,6 +321,8 @@ class Simulator:
             return "user"
         if self.leads_chat is not None and chat_id == self.leads_chat:
             return "LEADS_GROUP"
+        if self.reports_chat is not None and chat_id == self.reports_chat:
+            return "REPORTS_GROUP"
         if chat_id == config.ADMIN_TELEGRAM_ID:
             return "ADMIN"
         return "FOREIGN_CHAT"
@@ -434,19 +438,10 @@ class Simulator:
 
 
 def build_dispatcher() -> Dispatcher:
-    """Как в main.py: тот же порядок роутеров и middleware."""
-    from handlers import admin, documents, leads, qualify, questions, start
-    from middlewares.access import AccessMiddleware
+    """Тот же диспетчер, что у рабочего бота (main.build_dispatcher) — без отдельного списка роутеров."""
+    from main import build_dispatcher as build_main
 
-    dp = Dispatcher(storage=MemoryStorage())
-    dp.message.middleware(AccessMiddleware())
-    dp.include_router(admin.router)
-    dp.include_router(start.router)
-    dp.include_router(documents.router)
-    dp.include_router(qualify.router)
-    dp.include_router(leads.router)
-    dp.include_router(questions.router)
-    return dp
+    return build_main()
 
 
 # --- БД: метка и очистка тестовых пользователей -----------------------------------------
@@ -537,6 +532,8 @@ async def run(scenarios_path: str, out_dir: str) -> int:
     sim = Simulator()
     from services.leads import leads_chat_id
     sim.leads_chat = await leads_chat_id()
+    from services.notify import chat_id_for
+    sim.reports_chat = await chat_id_for("reports")
     logging.getLogger().addHandler(CaptureHandler(sim))
 
     results = []
@@ -575,6 +572,7 @@ async def run(scenarios_path: str, out_dir: str) -> int:
                 "token_is_fake": sim.bot.token == FAKE_TOKEN,
                 "telegram_network_attempts": Stats.telegram_network_attempts,
                 "intercepted_to_leads_group": sum(1 for o in all_out if o.get("target") == "LEADS_GROUP"),
+                "intercepted_to_reports_group": sum(1 for o in all_out if o.get("target") == "REPORTS_GROUP"),
                 "intercepted_to_admin": sum(1 for o in all_out if o.get("target") == "ADMIN"),
                 "intercepted_to_foreign_chat": sum(1 for o in all_out if o.get("target") == "FOREIGN_CHAT"),
             },

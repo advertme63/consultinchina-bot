@@ -8,7 +8,8 @@ from aiogram.types import CallbackQuery, KeyboardButton, Message, ReplyKeyboardM
 
 import database
 import keyboards as kb
-from services.leads import CLIENT_THANKS, submit_lead
+from services.catalog import service_title
+from services.leads import CLIENT_THANKS, submit_lead, submit_order
 from states import LeadStates
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,16 @@ async def start_lead(message: Message, state: FSMContext, first_name: str | None
     await state.set_state(LeadStates.name)
     await message.answer(
         "Передадим ваш вопрос Валерию Загурскому. Как к вам обращаться?", reply_markup=name_keyboard(first_name)
+    )
+
+
+async def start_order(message: Message, state: FSMContext, first_name: str | None, service: str, message_id: int) -> None:
+    """Заказ через «📝 Заказать» (Э4): те же шаги имя → телефон, без квалификации."""
+    await state.clear()
+    await state.set_state(LeadStates.name)
+    await state.update_data(order_service=service, order_message_id=message_id)
+    await message.answer(
+        f"Оформим заказ: {service_title(service)}. Как к вам обращаться?", reply_markup=name_keyboard(first_name)
     )
 
 
@@ -87,10 +98,14 @@ async def _finish(message: Message, state: FSMContext, phone: str | None) -> Non
     await state.clear()
     user = await database.get_user(message.from_user.id)
     await message.answer(CLIENT_THANKS, reply_markup=kb.MAIN_MENU)
+    name = data.get("name") or message.from_user.first_name or "—"
     try:
-        await submit_lead(message.bot, user, data.get("name") or message.from_user.first_name or "—", phone)
+        if data.get("order_service"):
+            await submit_order(message.bot, user, name, phone, data["order_service"], data.get("order_message_id"))
+        else:
+            await submit_lead(message.bot, user, name, phone)
     except Exception:
-        logger.exception("submit_lead failed for %s", message.from_user.id)
+        logger.exception("submit_lead/submit_order failed for %s", message.from_user.id)
 
 
 # --- группа «CinC Лиды»: «Взял в работу» ------------------------------------------

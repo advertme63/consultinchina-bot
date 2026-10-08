@@ -9,7 +9,7 @@ from pathlib import Path
 from aiogram import F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import database
 from config import config
@@ -293,3 +293,72 @@ async def add_file_save(message: Message, state: FSMContext) -> None:
     await database.add_file_to_library(message.document.file_name, local_path, title)
     await message.answer(f"Файл «{title}» добавлен в библиотеку документов.")
     await state.clear()
+
+
+# --- Э4: статистика и анализ -----------------------------------------------------------
+
+def _days_arg(message: Message, default: int, allowed: tuple[int, ...] | None = None) -> int | None:
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        return default
+    try:
+        n = int(parts[1])
+    except ValueError:
+        return None
+    if allowed and n not in allowed:
+        return None
+    return n if 1 <= n <= 365 else None
+
+
+@router.message(Command("stats"))
+async def stats_cmd(message: Message) -> None:
+    from services.notify import split_text
+    from services.stats import period_report
+
+    days = _days_arg(message, 7, (7, 30))
+    if days is None:
+        await message.answer("Использование: /stats [7|30]")
+        return
+    for chunk in split_text(await period_report(days)):
+        await message.answer(chunk, parse_mode=None)
+
+
+@router.message(Command("digest"))
+async def digest_cmd(message: Message) -> None:
+    """Сводка новых вопросов сейчас (не дожидаясь 19:00) — в личку админу; вопросы помечаются отправленными."""
+    from services.digest import build_digest
+    from services.notify import split_text
+
+    await message.answer("Собираю сводку новых вопросов…")
+    text = await build_digest()
+    if not text:
+        await message.answer("Новых вопросов без ответа из базы нет.")
+        return
+    for chunk in split_text(text):
+        await message.answer(chunk, parse_mode=None)
+
+
+@router.message(Command("report"))
+async def report_cmd(message: Message) -> None:
+    """Анализ недели сейчас, не дожидаясь понедельника — в личку админу."""
+    from services.notify import split_text
+    from services.weekly import build_weekly
+
+    await message.answer("Готовлю анализ недели, это займёт до минуты…")
+    for chunk in split_text(await build_weekly()):
+        await message.answer(chunk, parse_mode=None)
+
+
+@router.message(Command("export"))
+async def export_cmd(message: Message) -> None:
+    from services.export import build_csv
+
+    days = _days_arg(message, 7)
+    if days is None:
+        await message.answer("Использование: /export <дней>, например /export 7")
+        return
+    data, n = await build_csv(days)
+    await message.answer_document(
+        BufferedInputFile(data, filename=f"cinc_dialogs_{days}d.csv"),
+        caption=f"Диалоги за {days} дн.: {n} строк (без тестовых и админа; № пользователя вместо Telegram ID).",
+    )

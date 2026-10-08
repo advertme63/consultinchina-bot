@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Optional
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -49,24 +49,19 @@ async def my_limit(message: Message, state: FSMContext, user: Optional[dict] = N
     )
 
 
-async def _send(message: Message, text: str, footer: str = "", reply_markup=None) -> None:
+async def send_answer(bot: Bot, chat_id: int, text: str, footer: str = "", reply_markup=None) -> None:
     """HTML с экранированием; если Telegram отклонил разметку — повтор без неё (ТЗ 4.4)."""
     try:
         html = to_telegram_html(text) + (f"\n\n<i>{footer}</i>" if footer else "")
-        await message.answer(html, reply_markup=reply_markup)
+        await bot.send_message(chat_id, html, reply_markup=reply_markup)
     except TelegramBadRequest as e:
         logger.warning("Telegram отклонил HTML (%s), отправляю без разметки", e)
         plain = to_plain(text) + (f"\n\n{footer}" if footer else "")
-        await message.answer(plain, reply_markup=reply_markup, parse_mode=None)
+        await bot.send_message(chat_id, plain, reply_markup=reply_markup, parse_mode=None)
 
 
-@router.message(F.text, ~F.text.startswith("/"))
-async def handle_question(message: Message, user: Optional[dict] = None) -> None:
-    uid = message.from_user.id
-    question = clean_question(message.text)
-    if not question:  # пробелы / невидимые символы: не тратим лимит, не пишем в историю
-        await message.answer("Напишите вопрос текстом — отвечу по нашим справочникам.")
-        return
+async def ask_and_reply(bot: Bot, chat_id: int, uid: int, user: Optional[dict], question: str) -> None:
+    """Ядро вопроса для текста и для кнопки-подсказки: лимит → ответ ИИ → кнопки (Э4)."""
     limit = daily_limit(uid, user["role"] if user else None)
     today = shanghai_today()
     used = None
@@ -74,20 +69,33 @@ async def handle_question(message: Message, user: Optional[dict] = None) -> None
         used = await database.take_question(uid, today, limit)
         if used is None:
             await database.log_event(uid, "limit_hit", json.dumps({"limit": limit}))
-            await message.answer(LIMIT_EXHAUSTED, reply_markup=kb.manager_keyboard())
+            await bot.send_message(chat_id, LIMIT_EXHAUSTED, reply_markup=kb.manager_keyboard())
             return
 
     try:
-        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+        async with ChatActionSender.typing(bot=bot, chat_id=chat_id):
             result = await answer_question(uid, question)
     except Exception:
         logger.exception("answer_question failed for user %s", uid)
         if limit is not None:
             await database.refund_question(uid, today)
-        await message.answer("Не получилось ответить — сервис временно недоступен. Попробуйте ещё раз через минуту.")
+        await bot.send_message(chat_id, "Не получилось ответить — сервис временно недоступен. Попробуйте ещё раз через минуту.")
         return
 
     footer = ""
     if limit is not None and 0 < limit - used <= 3:
         footer = f"Осталось {plural_questions(limit - used)} на сегодня"
-    await _send(message, result.answer, footer, kb.cta_keyboard(result.intent, result.cta, result.force_manager))
+    markup = kb.answer_keyboard(
+        result.message_id, result.intent, result.cta, result.service, result.suggestions,
+        result.force_manager, result.answered_from_kb,
+    )
+    await send_answer(bot, chat_id, result.answer, footer, markup)
+
+
+@router.message(F.text, ~F.text.startswith("/"))
+async def handle_question(message: Message, user: Optional[dict] = None) -> None:
+    question = clean_question(message.text)
+    if not question:  # пробелы / невидимые символы: не тратим лимит, не пишем в историю
+        await message.answer("Напишите вопрос текстом — отвечу по нашим справочникам.")
+        return
+    await ask_and_reply(message.bot, message.chat.id, message.from_user.id, user, question)

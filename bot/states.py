@@ -18,3 +18,7 @@ class UploadStates(StatesGroup):
 
 class AddFileStates(StatesGroup):
     waiting_file = State()
+
+
+class RatingStates(StatesGroup):
+    feedback = State()  # «Что не так?» после 👎; message_id — в данных FSM

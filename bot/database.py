@@ -374,32 +374,56 @@ async def save_message(
     tokens_in: int,
     tokens_out: int,
     latency_ms: int,
+    cache_read: int = 0,
+    cache_write_5m: int = 0,
+    cache_write_1h: int = 0,
+    service: Optional[str] = None,
+    suggestions: Optional[list[str]] = None,
 ) -> int:
+    """tokens_in — «свежий» вход без кеша (с Э4); сегмент — users.segment на момент ответа."""
     async with pool().acquire() as conn:
         return await conn.fetchval(
             """
             INSERT INTO messages (telegram_id, question, answer, doc_keys, best_distance, answered_from_kb,
-                                  intent, cta, tokens_in, tokens_out, latency_ms)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id
+                                  intent, cta, tokens_in, tokens_out, latency_ms, cache_read, cache_write_5m,
+                                  cache_write_1h, service, suggestions, segment)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                    (SELECT segment FROM users WHERE telegram_id = $1))
+            RETURNING id
             """,
-            telegram_id,
-            question,
-            answer,
-            doc_keys,
-            best_distance,
-            answered_from_kb,
-            intent,
-            cta,
-            tokens_in,
-            tokens_out,
-            latency_ms,
+            telegram_id, question, answer, doc_keys, best_distance, answered_from_kb, intent, cta,
+            tokens_in, tokens_out, latency_ms, cache_read, cache_write_5m, cache_write_1h, service, suggestions,
+        )
+
+
+async def get_message(message_id: int) -> Optional[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM messages WHERE id = $1", message_id)
+
+
+async def set_rating(message_id: int, telegram_id: int, rating: int) -> bool:
+    """Оценка только своего ответа и только один раз. True — записано."""
+    async with pool().acquire() as conn:
+        return await conn.fetchval(
+            "UPDATE messages SET rating = $3 WHERE id = $1 AND telegram_id = $2 AND rating IS NULL RETURNING true",
+            message_id, telegram_id, rating,
+        ) or False
+
+
+async def set_feedback(message_id: int, telegram_id: int, feedback: str) -> None:
+    async with pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE messages SET feedback = $3 WHERE id = $1 AND telegram_id = $2", message_id, telegram_id, feedback
         )
 
 
 async def save_unanswered(telegram_id: int, question: str, bot_answer: str) -> None:
     async with pool().acquire() as conn:
         await conn.execute(
-            "INSERT INTO unanswered_questions (telegram_id, question, bot_answer) VALUES ($1, $2, $3)",
+            """
+            INSERT INTO unanswered_questions (telegram_id, question, bot_answer, segment)
+            VALUES ($1, $2, $3, (SELECT segment FROM users WHERE telegram_id = $1))
+            """,
             telegram_id,
             question,
             bot_answer,
@@ -486,12 +510,13 @@ async def create_lead(
     verdict: Optional[str],
     summary: str,
     segment: Optional[str] = None,
+    service: Optional[str] = None,
 ) -> int:
     async with pool().acquire() as conn:
         return await conn.fetchval(
             """
-            INSERT INTO leads (telegram_id, name, phone, answers, verdict, summary, segment)
-            VALUES ($1, $2, $3, $4::jsonb, $5, $6, COALESCE($7, (SELECT segment FROM users WHERE telegram_id = $1)))
+            INSERT INTO leads (telegram_id, name, phone, answers, verdict, summary, segment, service)
+            VALUES ($1, $2, $3, $4::jsonb, $5, $6, COALESCE($7, (SELECT segment FROM users WHERE telegram_id = $1)), $8)
             RETURNING id
             """,
             telegram_id,
@@ -501,6 +526,7 @@ async def create_lead(
             verdict,
             summary,
             segment,
+            service,
         )
 
 
@@ -595,3 +621,20 @@ async def list_commissions() -> list[asyncpg.Record]:
 async def get_commission(button: str) -> Optional[asyncpg.Record]:
     async with pool().acquire() as conn:
         return await conn.fetchrow("SELECT * FROM mp_commissions WHERE button = $1", button)
+
+
+# --- Э4: учёт вызовов Claude -------------------------------------------------------
+
+async def save_llm_usage(
+    telegram_id: Optional[int], purpose: str, model: str, input_t: int, cache_read: int,
+    cache_write_5m: int, cache_write_1h: int, output: int, cost_usd: float,
+) -> None:
+    async with pool().acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO llm_usage (telegram_id, purpose, model, input, cache_read, cache_write_5m, cache_write_1h,
+                                   output, cost_usd)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            telegram_id, purpose, model, input_t, cache_read, cache_write_5m, cache_write_1h, output, cost_usd,
+        )

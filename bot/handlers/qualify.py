@@ -171,11 +171,11 @@ def lead_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-async def verdict_message(segment: str, answers: dict, v: str) -> tuple[str, str]:
+async def verdict_message(segment: str, answers: dict, v: str, user_id: int | None = None) -> tuple[str, str]:
     """Текст итога (Claude) и блок с цифрами (Python). → (html, plain)"""
     seg = SEGMENTS[segment]
     try:
-        text, _, _ = await verdict_text(segment, answers, v)
+        text, _, _ = await verdict_text(segment, answers, v, user_id)
     except Exception:
         logger.exception("verdict_text failed")
         text = f"**{seg.labels[v]}**\n\nПодробно разберём вашу ситуацию с Валерием Загурским — кнопка ниже."
@@ -207,7 +207,7 @@ async def _save_and_next(message: Message, state: FSMContext, user_id: int, key:
         user_id, "qualify_done", json.dumps({"segment": segment, "verdict": v, "answers": answers}, ensure_ascii=False)
     )
     async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-        html, plain = await verdict_message(segment, answers, v)
+        html, plain = await verdict_message(segment, answers, v, user_id)
     try:
         await message.answer(html, reply_markup=lead_keyboard())
     except Exception:
