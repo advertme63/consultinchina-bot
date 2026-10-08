@@ -2,6 +2,7 @@
 Без Telegram: этим же кодом пользуется scripts/run_tests.py."""
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -17,9 +18,32 @@ from services.voyage_client import embed_query
 logger = logging.getLogger(__name__)
 
 MAX_QUESTION_CHARS = 2000
+# Невидимые символы, из которых может состоять «пустое» сообщение
+_INVISIBLE_RE = re.compile("[\u00ad\u180e\u200b-\u200f\u2028-\u202f\u205f-\u206f\ufeff]")
+# Цена и порядок оплаты регистрации → всегда кнопка «Связаться с менеджером» (решение Ивана 08.10).
+# Вопросы об оплате поставщикам сюда не относятся.
+_PAYMENT_RE = re.compile(r"оплат|оплачива|предоплат|рассрочк|реквизит|в рублях|как платить|как заплатить", re.I)
+_REG_PRICE_RE = re.compile(
+    r"(сколько стоит|стоимост|цен[аыу]|прайс|почём).{0,60}(регистрац|открыт|компани|wfoe|пакет|базов|эксперт|профи)"
+    r"|(регистрац|открыт|компани|wfoe|пакет|базов|эксперт|профи).{0,60}(сколько стоит|стоимост|цен[аыу])",
+    re.I | re.S,
+)
+_SUPPLIER_RE = re.compile(r"поставщик|фабрик|продавц|1688|таобао|taobao", re.I)
 SEARCH_LIMIT = 8
 HISTORY_PAIRS = 3  # 6 сообщений
 NOT_KB_GAP_INTENTS = ("off_topic", "wants_human")
+
+
+def clean_question(text: Optional[str]) -> str:
+    """Текст вопроса без невидимых символов и пробелов по краям. Пустая строка — вопроса нет."""
+    return _INVISIBLE_RE.sub("", text or "").strip()
+
+
+def needs_manager_button(question: str) -> bool:
+    """Вопрос о цене или порядке оплаты регистрации — кнопку менеджера показываем всегда, не полагаясь на cta."""
+    if _SUPPLIER_RE.search(question):
+        return False
+    return bool(_PAYMENT_RE.search(question) or _REG_PRICE_RE.search(question))
 
 
 @dataclass
@@ -37,6 +61,7 @@ class AnswerResult:
     cache_write: int = 0
     latency_ms: int = 0
     message_id: Optional[int] = None
+    force_manager: bool = False
 
 
 async def _embed(question: str) -> Optional[list[float]]:
@@ -79,7 +104,9 @@ def _user_content(question: str, rows, relevant: bool) -> str:
 
 async def answer_question(telegram_id: int, question: str) -> AnswerResult:
     started = time.monotonic()
-    question = question.strip()[:MAX_QUESTION_CHARS]
+    question = clean_question(question)[:MAX_QUESTION_CHARS]
+    if not question:
+        raise ValueError("пустой вопрос: в поиск и Claude не отправляем")
 
     embedding = await _embed(question)
     rows = await database.search_hybrid(embedding, question, limit=SEARCH_LIMIT, fts_weight=config.FTS_WEIGHT)
@@ -88,7 +115,9 @@ async def answer_question(telegram_id: int, question: str) -> AnswerResult:
 
     history = []
     for h in await database.recent_dialog(telegram_id, HISTORY_PAIRS):
-        history += [{"role": "user", "content": h["question"]}, {"role": "assistant", "content": h["answer"]}]
+        q, a = clean_question(h["question"]), (h["answer"] or "").strip()
+        if q and a:  # пустое сообщение в истории ломает вызов Claude (400)
+            history += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
 
     reply = await ask_claude(history, _user_content(question, rows, relevant))
     answered_from_kb = reply.answered_from_kb and relevant
@@ -117,4 +146,5 @@ async def answer_question(telegram_id: int, question: str) -> AnswerResult:
         cache_write=reply.cache_write,
         latency_ms=latency_ms,
         message_id=message_id,
+        force_manager=needs_manager_button(question),
     )

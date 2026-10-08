@@ -143,6 +143,18 @@ async def qualify_answer(callback: CallbackQuery, state: FSMContext) -> None:
     await _save_and_next(callback.message, state, callback.from_user.id, step.key, value)
 
 
+@router.callback_query(F.data.regexp(r"^q:\d+:(\d+|skip)$"))
+async def qualify_stale_button(callback: CallbackQuery) -> None:
+    """Кнопка анкеты, которой уже нет (анкета сброшена /start, отменена или бот перезапущен)."""
+    await callback.answer("Анкета устарела, начните заново")
+    await callback.message.answer(
+        "Эта анкета уже неактуальна. Начните проверку заново:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="📊 Подходит ли мне", callback_data="cta:qualify")]]
+        ),
+    )
+
+
 @router.message(QualifyStates.step, F.text, kb.is_not_menu_button, ~F.text.startswith("/"))
 async def qualify_text(message: Message, state: FSMContext) -> None:
     data = await state.get_data()

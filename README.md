@@ -45,3 +45,15 @@ docker stats --no-stream
 docker compose logs --tail 100 bot
 docker compose logs --tail 100 db
 ```
+
+## E2E-тест бота (симулятор)
+
+Поддельные Update от тестовых пользователей −2001…−2099 → настоящий Dispatcher; все вызовы Bot API перехватываются,
+в Telegram и в группу лидов ничего не уходит. Реальные БД, поиск и Claude используются; тестовые пользователи удаляются
+до и после прогона. Подробно — `bot/scripts/e2e/README.md`.
+
+```bash
+bot/scripts/e2e/run.sh bot/scripts/e2e/selftest.json          # самотест предохранителя (без Claude)
+bot/scripts/e2e/run.sh /root/e2e_runs/scenarios.json          # полный прогон сценариев тестировщика (~$2, ~40 мин)
+bot/scripts/e2e/run.sh --cleanup                              # только очистка тестовых пользователей
+```

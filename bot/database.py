@@ -353,7 +353,7 @@ async def recent_dialog(telegram_id: int, pairs: int = 3) -> list[asyncpg.Record
         rows = await conn.fetch(
             """
             SELECT question, answer FROM messages
-            WHERE telegram_id = $1 AND answer IS NOT NULL
+            WHERE telegram_id = $1 AND answer IS NOT NULL AND btrim(question) <> '' AND btrim(answer) <> ''
             ORDER BY created_at DESC, id DESC LIMIT $2
             """,
             telegram_id,

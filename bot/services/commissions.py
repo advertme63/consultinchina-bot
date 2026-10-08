@@ -61,7 +61,16 @@ def marketplace_data(row, mp: str, today: Optional[date] = None) -> Optional[dic
     return {"rf": rf, "cn": cn, "sources": sources, "category": category}
 
 
+OZON_CN_SCHEME = "rFBS: доставку до покупателя организует продавец"
+
+
 def _line(mp_title: str, d: dict) -> str:
+    if mp_title == "Ozon":
+        # Ozon: ставки из разных источников и схем (FBS / rFBS) — разницу не считаем (решение Ивана 08.10)
+        return (
+            f"<b>Комиссии в категории «{escape(d['category'])}» на Ozon</b> ({escape(d['sources'])}):\n"
+            f"из РФ — около {fmt_pct(d['rf'])}% (FBS), из Китая — около {fmt_pct(d['cn'])}% ({OZON_CN_SCHEME})."
+        )
     diff = Decimal(d["rf"]) - Decimal(d["cn"])
     if diff > 0:
         tail = f"Разница — около {fmt_pct(diff)} п.п."

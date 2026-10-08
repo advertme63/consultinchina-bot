@@ -18,7 +18,8 @@ class Config:
     # Данные mp_commissions старше — цифры в итоге селлера не показываем (Э3.5, раздел 2)
     COMMISSIONS_MAX_AGE_DAYS = int(os.environ.get("COMMISSIONS_MAX_AGE_DAYS", "60"))
     DAILY_LIMIT_GUEST = int(os.environ.get("DAILY_LIMIT_GUEST", "15"))
-    DAILY_LIMIT_CLIENT = int(os.environ.get("DAILY_LIMIT_CLIENT", "30"))
+    # 15 для всех — решение Ивана 08.10 (было: клиент 30). Админ — без лимита
+    DAILY_LIMIT_CLIENT = int(os.environ.get("DAILY_LIMIT_CLIENT", "15"))
 
 
 config = Config()

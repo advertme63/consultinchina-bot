@@ -27,12 +27,12 @@ CTA_MANAGER_TEXT = "👤 Связаться с менеджером"
 CTA_REVIEW_TEXT = "👤 Разбор с Валерием Загурским"
 
 
-def cta_keyboard(intent: str, cta: str) -> InlineKeyboardMarkup | None:
-    """Кнопки под ответом по ТЗ 4.2."""
+def cta_keyboard(intent: str, cta: str, force_manager: bool = False) -> InlineKeyboardMarkup | None:
+    """Кнопки под ответом по ТЗ 4.2. force_manager — вопрос о цене / оплате регистрации."""
     rows = []
     if intent == "wants_calc" or cta == "qualify":
         rows.append([InlineKeyboardButton(text=CTA_QUALIFY_TEXT, callback_data="cta:qualify")])
-    if intent == "wants_human" or cta == "manager":
+    if intent == "wants_human" or cta == "manager" or force_manager:
         rows.append([InlineKeyboardButton(text=CTA_MANAGER_TEXT, callback_data="cta:manager")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 

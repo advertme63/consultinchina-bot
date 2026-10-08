@@ -12,7 +12,7 @@ from aiogram.utils.chat_action import ChatActionSender
 
 import database
 import keyboards as kb
-from services.answer import answer_question
+from services.answer import answer_question, clean_question
 from services.limits import daily_limit, plural_questions, shanghai_today, until_reset
 from services.tg_format import to_plain, to_telegram_html
 
@@ -63,6 +63,10 @@ async def _send(message: Message, text: str, footer: str = "", reply_markup=None
 @router.message(F.text, ~F.text.startswith("/"))
 async def handle_question(message: Message, user: Optional[dict] = None) -> None:
     uid = message.from_user.id
+    question = clean_question(message.text)
+    if not question:  # пробелы / невидимые символы: не тратим лимит, не пишем в историю
+        await message.answer("Напишите вопрос текстом — отвечу по нашим справочникам.")
+        return
     limit = daily_limit(uid, user["role"] if user else None)
     today = shanghai_today()
     used = None
@@ -75,7 +79,7 @@ async def handle_question(message: Message, user: Optional[dict] = None) -> None
 
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            result = await answer_question(uid, message.text)
+            result = await answer_question(uid, question)
     except Exception:
         logger.exception("answer_question failed for user %s", uid)
         if limit is not None:
@@ -86,4 +90,4 @@ async def handle_question(message: Message, user: Optional[dict] = None) -> None
     footer = ""
     if limit is not None and 0 < limit - used <= 3:
         footer = f"Осталось {plural_questions(limit - used)} на сегодня"
-    await _send(message, result.answer, footer, kb.cta_keyboard(result.intent, result.cta))
+    await _send(message, result.answer, footer, kb.cta_keyboard(result.intent, result.cta, result.force_manager))
