@@ -72,10 +72,11 @@ def _get_client() -> AsyncAnthropic:
 
 
 def _clean_suggestions(raw) -> list[str]:
+    """Длиннее лимита — отбрасываем, а не режем: обрезанный вопрос ушёл бы клиенту и в поиск искажённым."""
     out = []
     for x in raw if isinstance(raw, list) else []:
-        t = " ".join(str(x).split())[:MAX_SUGGESTION_CHARS].strip()
-        if t and t not in out:
+        t = " ".join(str(x).split())
+        if t and len(t) <= MAX_SUGGESTION_CHARS and t not in out:
             out.append(t)
     return out[:MAX_SUGGESTIONS]
 
