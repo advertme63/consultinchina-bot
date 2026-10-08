@@ -43,13 +43,13 @@ async def job_digest(bot: Bot) -> None:
 
     text = await build_digest()
     if text:  # нет новых вопросов — не отправляем (ТЗ 7.1)
-        await notify.send_to_group(bot, "leads", text, parse_mode=None)
+        await notify.send_markdown_to_group(bot, "leads", text)
 
 
 async def job_weekly(bot: Bot) -> None:
     from services.weekly import build_weekly
 
-    await notify.send_to_group(bot, "reports", await build_weekly(), parse_mode=None)
+    await notify.send_markdown_to_group(bot, "reports", await build_weekly())
 
 
 async def job_cleanup(bot: Bot) -> None:

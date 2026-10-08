@@ -126,6 +126,9 @@ async def ask_claude_text(
     message = await client.messages.create(
         model=config.CLAUDE_MODEL,
         max_tokens=max_tokens,
+        # claude-sonnet-5 по умолчанию сначала «думает»: на длинном промпте размышление съедало весь max_tokens,
+        # и текста в ответе не было (Э4, анализ недели). Для свободных текстов размышление выключаем.
+        thinking={"type": "disabled"},
         system=[{"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_content}],
     )

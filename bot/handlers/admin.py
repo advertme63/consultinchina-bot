@@ -310,6 +310,20 @@ def _days_arg(message: Message, default: int, allowed: tuple[int, ...] | None = 
     return n if 1 <= n <= 365 else None
 
 
+async def _answer_markdown(message: Message, text: str) -> None:
+    """Текст от Claude в личку админу: Telegram-HTML кусками; отказ разметки — без неё."""
+    from aiogram.exceptions import TelegramBadRequest
+    from services.notify import split_text
+    from services.tg_format import to_plain, to_telegram_html
+
+    try:
+        for chunk in split_text(to_telegram_html(text, limit=None)):
+            await message.answer(chunk)
+    except TelegramBadRequest:
+        for chunk in split_text(to_plain(text, limit=None)):
+            await message.answer(chunk, parse_mode=None)
+
+
 @router.message(Command("stats"))
 async def stats_cmd(message: Message) -> None:
     from services.notify import split_text
@@ -334,8 +348,7 @@ async def digest_cmd(message: Message) -> None:
     if not text:
         await message.answer("Новых вопросов без ответа из базы нет.")
         return
-    for chunk in split_text(text):
-        await message.answer(chunk, parse_mode=None)
+    await _answer_markdown(message, text)
 
 
 @router.message(Command("report"))
@@ -345,8 +358,7 @@ async def report_cmd(message: Message) -> None:
     from services.weekly import build_weekly
 
     await message.answer("Готовлю анализ недели, это займёт до минуты…")
-    for chunk in split_text(await build_weekly()):
-        await message.answer(chunk, parse_mode=None)
+    await _answer_markdown(message, await build_weekly())
 
 
 @router.message(Command("export"))

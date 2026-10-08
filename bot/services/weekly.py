@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 MAX_DIALOGS = 150
 
 
-async def build_weekly(scope: str = "real") -> str:
-    end_day = shanghai_today() - timedelta(days=1)
+async def build_weekly(scope: str = "real", end_day=None) -> str:
+    """По умолчанию — 7 полных суток до вчера включительно (запуск в пн 10:00 → пн–вс прошлой недели)."""
+    end_day = end_day or (shanghai_today() - timedelta(days=1))
     first = end_day - timedelta(days=6)
     start, end = day_bounds(first, 7)
     period = f"{first:%d.%m}–{end_day:%d.%m.%Y}"
@@ -52,7 +53,7 @@ async def build_weekly(scope: str = "real") -> str:
         "или справочнике.\n"
         "4. Воронка по сегментам: пользователи → вопросы → квалификация → заявка/заказ → взято в работу.\n"
         "5. Темы для контента: 5 вопросов, которые стоит превратить в пост или статью.\n"
-        "Только по данным выше, без выдумок."
+        "Только по данным выше, без выдумок. Сжато: весь отчёт — до ~700 слов."
     )
-    text, _, _ = await ask_claude_text(prompt, max_tokens=1800, purpose="weekly")
+    text, _, _ = await ask_claude_text(prompt, max_tokens=4000, purpose="weekly")
     return f"📈 Анализ недели {period}\n\n{text}"

@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramMigrateToChat
+from aiogram.exceptions import TelegramBadRequest, TelegramMigrateToChat
 from aiogram.types import Message
 
 import database
@@ -54,8 +54,11 @@ def split_text(text: str, limit: int = TG_LIMIT) -> list[str]:
     return parts or [""]
 
 
-async def send_to_group(bot: Bot, kind: str, text: str, **kwargs) -> Optional[Message]:
-    """Возвращает первое отправленное сообщение (для group_message_id) или None."""
+async def send_to_group(
+    bot: Bot, kind: str, text: str, raise_bad_markup: bool = False, **kwargs
+) -> Optional[Message]:
+    """Возвращает первое отправленное сообщение (для group_message_id) или None.
+    raise_bad_markup — отказ Telegram в разметке на ПЕРВОМ куске пробросить наружу (для повтора без разметки)."""
     key, env, title = GROUPS[kind]
     chat_id = await chat_id_for(kind)
     if not chat_id:
@@ -77,9 +80,23 @@ async def send_to_group(bot: Bot, kind: str, text: str, **kwargs) -> Optional[Me
                 await database.set_setting(key, str(chat_id))
                 await notify_admin(bot, f"ℹ️ Группа {title} стала супергруппой, новый ID {chat_id} сохранён в settings.")
             except Exception as e:
+                if raise_bad_markup and first is None and isinstance(e, TelegramBadRequest):
+                    raise
                 logger.exception("Не удалось отправить в группу %s %s", title, chat_id)
                 await notify_admin(
                     bot, f"⚠️ Не удалось отправить в группу {title} ({type(e).__name__}: {e}).\n\nТекст:\n{text[:3000]}"
                 )
                 return first
     return first
+
+
+
+async def send_markdown_to_group(bot: Bot, kind: str, text: str) -> Optional[Message]:
+    """Текст от Claude (**жирный**, списки, #заголовки) → Telegram-HTML; Telegram отклонил разметку — без неё."""
+    from services.tg_format import to_plain, to_telegram_html
+
+    try:
+        return await send_to_group(bot, kind, to_telegram_html(text, limit=None), raise_bad_markup=True, parse_mode="HTML")
+    except TelegramBadRequest:
+        logger.warning("Группа %s: Telegram отклонил HTML отчёта — отправляю без разметки", kind)
+        return await send_to_group(bot, kind, to_plain(text, limit=None), parse_mode=None)
