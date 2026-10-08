@@ -9,13 +9,16 @@ from pathlib import Path
 from aiogram import F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message,
+    ReplyKeyboardMarkup,
+)
 
 import database
 from config import config
-from keyboards import BTN_MATERIALS, LEGACY_DOCS
+from keyboards import BTN_MATERIALS, LEGACY_DOCS, MAIN_MENU
 from services.kb_ingest import KB_DIR, KB_SOURCES, ingest
-from states import AddFileStates, UploadStates
+from states import AddFileStates, EditFileStates, UploadStates
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +250,9 @@ async def admin_materials(message: Message) -> None:
     """Админу «📄 Материалы» — справочники, по которым отвечает бот, и презентации для пользователей."""
     files = await database.list_files_library()
     if files:
-        library = "\n".join(f"• {escape(f['title'])}" for f in files)
+        library = "\n".join(
+            f"• #{f['id']} · №{f['sort_order'] if f['sort_order'] is not None else '—'} · {escape(f['title'])}" for f in files
+        ) + "\n\nКак видит клиент: /materials · добавить: /add_file · править: /edit_file <id>"
     else:
         library = "пусто — добавить: /add_file"
     await message.answer(
@@ -274,25 +279,166 @@ async def delete_doc(message: Message) -> None:
 
 # --- documents library -------------------------------------------------------
 
+LIBRARY_DIR = Path("/app/data/library")
+SKIP = "-"
+
+
+def _reply_kb(*rows: list[str]) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in r] for r in rows],
+                               resize_keyboard=True, one_time_keyboard=True)
+
+
+async def _save_library_document(message: Message) -> tuple[str, str]:
+    """Файл из Telegram → data/library/<file_unique_id>_<имя> (префикс — защита от совпадений имён)."""
+    LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+    name = message.document.file_name or "file.pdf"
+    path = LIBRARY_DIR / f"{message.document.file_unique_id}_{name}"
+    await message.bot.download(message.document, destination=path)
+    return name, str(path)
+
+
 @router.message(Command("add_file"))
 async def add_file_start(message: Message, state: FSMContext) -> None:
+    await state.clear()
     await state.set_state(AddFileStates.waiting_file)
-    await message.answer(
-        "Пришлите файл для библиотеки «Документы». Подпись к файлу станет его названием "
-        "(если не указать — возьму имя файла)."
-    )
+    await message.answer("Пришлите файл для раздела «📄 Материалы». Отмена — /cancel_file.")
+
+
+@router.message(Command("cancel_file"), StateFilter(AddFileStates, EditFileStates))
+async def add_file_cancel(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Отменено.", reply_markup=MAIN_MENU)
 
 
 @router.message(AddFileStates.waiting_file, F.document)
-async def add_file_save(message: Message, state: FSMContext) -> None:
-    file = await message.bot.get_file(message.document.file_id)
-    local_path = f"/app/data/library/{message.document.file_unique_id}_{message.document.file_name}"
-    os.makedirs(os.path.dirname(local_path), exist_ok=True)
-    await message.bot.download_file(file.file_path, local_path)
-    title = message.caption or message.document.file_name
-    await database.add_file_to_library(message.document.file_name, local_path, title)
-    await message.answer(f"Файл «{title}» добавлен в библиотеку документов.")
+async def add_file_doc(message: Message, state: FSMContext) -> None:
+    name, path = await _save_library_document(message)
+    await state.update_data(filename=name, storage_path=path)
+    await state.set_state(AddFileStates.title)
+    hint = message.caption or Path(name).stem.replace("_", " ")
+    await message.answer("Название материала (жирным в подписи):", reply_markup=_reply_kb([hint]))
+
+
+@router.message(AddFileStates.title, F.text, ~F.text.startswith("/"))
+async def add_file_title(message: Message, state: FSMContext) -> None:
+    await state.update_data(title=message.text.strip()[:200])
+    await state.set_state(AddFileStates.description)
+    await message.answer("Описание — одна строка под названием. «-» — без описания.", reply_markup=_reply_kb([SKIP]))
+
+
+@router.message(AddFileStates.description, F.text, ~F.text.startswith("/"))
+async def add_file_description(message: Message, state: FSMContext) -> None:
+    text = message.text.strip()
+    await state.update_data(description=None if text == SKIP else text[:500])
+    await state.set_state(AddFileStates.sort_order)
+    nxt = await database.next_library_sort_order()
+    await message.answer("Номер в списке (меньше — выше):", reply_markup=_reply_kb([str(nxt)]))
+
+
+@router.message(AddFileStates.sort_order, F.text, ~F.text.startswith("/"))
+async def add_file_sort(message: Message, state: FSMContext) -> None:
+    if not message.text.strip().isdigit():
+        await message.answer("Нужно целое число, например 4.")
+        return
+    await state.update_data(sort_order=int(message.text.strip()))
+    data = await state.get_data()
+    await state.set_state(AddFileStates.send_name)
+    from services.materials import default_send_name
+
+    await message.answer("Имя файла, которое увидит клиент:",
+                         reply_markup=_reply_kb([default_send_name(data["title"], data["filename"])]))
+
+
+@router.message(AddFileStates.send_name, F.text, ~F.text.startswith("/"))
+async def add_file_finish(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
     await state.clear()
+    send_name = message.text.strip()[:200]
+    if "." not in send_name:
+        send_name += Path(data["filename"]).suffix or ".pdf"
+    new_id = await database.add_file_to_library(
+        data["filename"], data["storage_path"], data["title"], data["description"], data["sort_order"], send_name
+    )
+    await message.answer(
+        f"Добавлено: #{new_id} · №{data['sort_order']} · <b>{escape(data['title'])}</b> · {escape(send_name)}\n"
+        f"Проверить, как видит клиент: /materials · править: /edit_file {new_id}",
+        reply_markup=MAIN_MENU,
+    )
+
+
+@router.message(Command("materials"))
+async def admin_materials_preview(message: Message) -> None:
+    """Админу — ровно то, что видит клиент в «📄 Материалы»."""
+    from services.materials import send_materials
+
+    await send_materials(message.bot, message.chat.id)
+
+
+EDIT_FIELDS = {"title": "название", "description": "описание", "sort_order": "номер в списке", "send_name": "имя файла"}
+
+
+def _file_card(row) -> str:
+    return (f"Материал #{row['id']}\n№ {row['sort_order'] if row['sort_order'] is not None else '—'}\n"
+            f"Название: <b>{escape(row['title'])}</b>\nОписание: {escape(row['description'] or '—')}\n"
+            f"Имя файла: {escape(row['send_name'] or row['filename'])}\nФайл на сервере: {escape(row['filename'])}")
+
+
+@router.message(Command("edit_file"))
+async def edit_file_start(message: Message, state: FSMContext) -> None:
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Использование: /edit_file <id> — id видно в «📄 Материалы».")
+        return
+    row = await database.get_library_file(int(parts[1]))
+    if not row:
+        await message.answer("Материала с таким id нет.")
+        return
+    await state.clear()
+    buttons = [[InlineKeyboardButton(text=f"✏️ {t}", callback_data=f"fedit:{row['id']}:{f}")] for f, t in EDIT_FIELDS.items()]
+    buttons.append([InlineKeyboardButton(text="📎 Заменить файл", callback_data=f"fedit:{row['id']}:file")])
+    await message.answer(_file_card(row), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@router.callback_query(F.data.regexp(r"^fedit:\d+:(title|description|sort_order|send_name|file)$"))
+async def edit_file_field(callback: CallbackQuery, state: FSMContext) -> None:
+    _, fid, field = callback.data.split(":")
+    await callback.answer()
+    await state.clear()
+    await state.update_data(edit_id=int(fid), edit_field=field)
+    if field == "file":
+        await state.set_state(EditFileStates.file)
+        await callback.message.answer("Пришлите новый файл. Отмена — /cancel_file.")
+        return
+    await state.set_state(EditFileStates.value)
+    hint = " «-» — очистить." if field == "description" else ""
+    await callback.message.answer(f"Новое значение — {EDIT_FIELDS[field]}.{hint} Отмена — /cancel_file.")
+
+
+@router.message(EditFileStates.value, F.text, ~F.text.startswith("/"))
+async def edit_file_value(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    field, text = data["edit_field"], message.text.strip()
+    if field == "sort_order":
+        if not text.isdigit():
+            await message.answer("Нужно целое число.")
+            return
+        value = int(text)
+    elif field == "description":
+        value = None if text == SKIP else text[:500]
+    else:
+        value = text[:200]
+    await state.clear()
+    await database.update_library_file(data["edit_id"], field, value)
+    await message.answer("Сохранено.\n\n" + _file_card(await database.get_library_file(data["edit_id"])))
+
+
+@router.message(EditFileStates.file, F.document)
+async def edit_file_document(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.clear()
+    name, path = await _save_library_document(message)
+    await database.replace_library_file(data["edit_id"], name, path)  # tg_file_id обнуляется
+    await message.answer("Файл заменён (кэш Telegram сброшен).\n\n" + _file_card(await database.get_library_file(data["edit_id"])))
 
 
 # --- Э4: статистика и анализ -----------------------------------------------------------

@@ -219,19 +219,57 @@ async def search_chunks(
 
 # --- files library ---------------------------------------------------------
 
-async def add_file_to_library(filename: str, storage_path: str, title: str) -> None:
+async def add_file_to_library(
+    filename: str, storage_path: str, title: str, description: Optional[str] = None,
+    sort_order: Optional[int] = None, send_name: Optional[str] = None,
+) -> int:
     async with pool().acquire() as conn:
-        await conn.execute(
-            "INSERT INTO files_library (filename, storage_path, title) VALUES ($1, $2, $3)",
-            filename,
-            storage_path,
-            title,
+        return await conn.fetchval(
+            """
+            INSERT INTO files_library (filename, storage_path, title, description, sort_order, send_name)
+            VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+            """,
+            filename, storage_path, title, description, sort_order, send_name,
         )
 
 
 async def list_files_library() -> list[asyncpg.Record]:
+    """«📄 Материалы»: по sort_order по возрастанию (без номера — в конце), затем по id."""
     async with pool().acquire() as conn:
-        return await conn.fetch("SELECT * FROM files_library ORDER BY uploaded_at DESC")
+        return await conn.fetch("SELECT * FROM files_library ORDER BY sort_order NULLS LAST, id")
+
+
+async def get_library_file(file_id: int) -> Optional[asyncpg.Record]:
+    async with pool().acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM files_library WHERE id = $1", file_id)
+
+
+async def next_library_sort_order() -> int:
+    async with pool().acquire() as conn:
+        return (await conn.fetchval("SELECT COALESCE(max(sort_order), 0) FROM files_library")) + 1
+
+
+LIBRARY_FIELDS = {"title", "description", "sort_order", "send_name"}
+
+
+async def update_library_file(file_id: int, field: str, value) -> None:
+    assert field in LIBRARY_FIELDS
+    async with pool().acquire() as conn:
+        await conn.execute(f"UPDATE files_library SET {field} = $2 WHERE id = $1", file_id, value)
+
+
+async def replace_library_file(file_id: int, filename: str, storage_path: str) -> None:
+    """Новый файл — старый file_id Telegram больше не годится."""
+    async with pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE files_library SET filename = $2, storage_path = $3, tg_file_id = NULL, uploaded_at = now() WHERE id = $1",
+            file_id, filename, storage_path,
+        )
+
+
+async def set_library_tg_file_id(file_id: int, tg_file_id: Optional[str]) -> None:
+    async with pool().acquire() as conn:
+        await conn.execute("UPDATE files_library SET tg_file_id = $2 WHERE id = $1", file_id, tg_file_id)
 
 
 # --- hybrid search (ТЗ 3.4) ------------------------------------------------

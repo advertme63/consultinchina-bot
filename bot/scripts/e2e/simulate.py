@@ -38,12 +38,14 @@ from aiogram.methods import (
     EditMessageReplyMarkup,
     EditMessageText,
     SendChatAction,
+    SendDocument,
     SendMessage,
 )
 from aiogram.types import (
     CallbackQuery,
     Chat,
     Contact,
+    Document,
     InlineKeyboardMarkup,
     Message,
     ReplyKeyboardMarkup,
@@ -276,6 +278,33 @@ class FakeSession(BaseSession):
                 sim.remember(msg)
                 return msg
             return sim.edit(bot, chat_id, method.message_id, text=method.text, rm=method.reply_markup)
+        if isinstance(method, SendDocument):
+            # «📄 Материалы» (Э5): фиксируем имя файла, подпись и отправку по file_id; file_id — с префиксом E2E_
+            parse_mode = bot.default.parse_mode if isinstance(method.parse_mode, Default) else method.parse_mode
+            chat_id = int(method.chat_id)
+            doc = method.document
+            by_file_id = isinstance(doc, str)
+            filename = None if by_file_id else getattr(doc, "filename", None)
+            caption = method.caption or ""
+            entry = {"api": "send_document", "target": sim.target_of(chat_id), "chat_id": chat_id,
+                     "parse_mode": parse_mode, "by_file_id": by_file_id,
+                     "file_id": doc if by_file_id else None, "filename": filename,
+                     "text_raw": caption, "text": plain_of(caption) if parse_mode else caption,
+                     "buttons": markup_of(method.reply_markup)}
+            err = telegram_html_error(caption) if parse_mode and str(parse_mode).upper() == "HTML" and caption else None
+            if by_file_id and not str(doc).startswith("E2E_"):
+                err = err or "wrong file identifier/HTTP URL specified"  # чужой file_id в симуляторе не существует
+            if err:
+                entry["telegram_error"] = f"Bad Request: {err}"
+                sim.record(entry)
+                raise TelegramBadRequest(method=method, message=entry["telegram_error"])
+            sim.record(entry)
+            msg = self._new_message(bot, chat_id, caption or "·", method.reply_markup)
+            fid = doc if by_file_id else f"E2E_FILE_{self._next_id}"
+            msg = msg.model_copy(update={"document": Document(file_id=fid, file_unique_id=f"e2e{self._next_id}",
+                                                              file_name=filename)}).as_(bot)
+            sim.remember(msg)
+            return msg
         if isinstance(method, EditMessageReplyMarkup):
             chat_id = int(method.chat_id)
             sim.record({"api": "edit_markup", "target": sim.target_of(chat_id), "chat_id": chat_id,
@@ -477,6 +506,11 @@ async def cleanup() -> dict:
                 counts[t] = int(r.split()[-1])
         left = {t: await conn.fetchval(f"SELECT count(*) FROM {t} WHERE telegram_id BETWEEN $1 AND $2", ID_MIN, ID_MAX)
                 for t in CLEAN_TABLES}
+        # file_id из симулятора (E2E_…) в рабочей files_library не оставляем
+        r = await conn.execute("UPDATE files_library SET tg_file_id = NULL WHERE tg_file_id LIKE 'E2E\\_%'")
+        counts["files_library_e2e_file_id"] = int(r.split()[-1])
+        left["files_library_e2e_file_id"] = await conn.fetchval(
+            "SELECT count(*) FROM files_library WHERE tg_file_id LIKE 'E2E\\_%'")
     return {"deleted": counts, "left_after": left}
 
 

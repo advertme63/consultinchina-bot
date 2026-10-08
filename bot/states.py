@@ -18,6 +18,15 @@ class UploadStates(StatesGroup):
 
 class AddFileStates(StatesGroup):
     waiting_file = State()
+    title = State()
+    description = State()
+    sort_order = State()
+    send_name = State()
+
+
+class EditFileStates(StatesGroup):
+    value = State()  # новое значение поля; id и поле — в данных FSM
+    file = State()  # новый файл взамен
 
 
 class RatingStates(StatesGroup):
