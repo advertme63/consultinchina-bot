@@ -514,6 +514,23 @@ async def cleanup() -> dict:
     return {"deleted": counts, "left_after": left}
 
 
+async def snapshot_file_ids() -> dict[int, Optional[str]]:
+    async with database.pool().acquire() as conn:
+        return {r["id"]: r["tg_file_id"] for r in await conn.fetch("SELECT id, tg_file_id FROM files_library")}
+
+
+async def restore_file_ids(snapshot: dict[int, Optional[str]]) -> int:
+    """Вернуть tg_file_id, бывшие до прогона (только для записей, где значение изменилось)."""
+    restored = 0
+    async with database.pool().acquire() as conn:
+        for fid, value in snapshot.items():
+            r = await conn.execute(
+                "UPDATE files_library SET tg_file_id = $2 WHERE id = $1 AND tg_file_id IS DISTINCT FROM $2", fid, value
+            )
+            restored += int(r.split()[-1])
+    return restored
+
+
 async def reset_user(sim: Simulator, uid: int) -> None:
     assert ID_MIN <= uid <= ID_MAX
     async with database.pool().acquire() as conn:
@@ -576,6 +593,9 @@ async def run(scenarios_path: str, out_dir: str) -> int:
     started = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     t0 = time.monotonic()
     pre = await cleanup()
+    # Кэш file_id «📄 Материалов» — рабочие данные: симулятор не знает настоящих file_id, бот в прогоне
+    # перезапишет их тестовыми (E2E_…), а очистка их обнулит. Запоминаем до прогона и возвращаем после.
+    fileid_snapshot = await snapshot_file_ids()
     sim = Simulator()
     from services.leads import leads_chat_id
     sim.leads_chat = await leads_chat_id()
@@ -600,6 +620,8 @@ async def run(scenarios_path: str, out_dir: str) -> int:
     finally:
         jsonl.close()
         post = await cleanup() if not data.get("keep_users") else {"skipped": True}
+        if isinstance(post, dict):
+            post["files_library_file_id_restored"] = await restore_file_ids(fileid_snapshot)
         all_out = [o for r in results for s in r["steps"] for o in s["outputs"]]
         summary = {
             "started": started,
