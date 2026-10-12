@@ -30,6 +30,9 @@ class Config:
     DAILY_LIMIT_GUEST = int(os.environ.get("DAILY_LIMIT_GUEST", "15"))
     # 15 для всех — решение Ивана 08.10 (было: клиент 30). Админ — без лимита
     DAILY_LIMIT_CLIENT = int(os.environ.get("DAILY_LIMIT_CLIENT", "15"))
+    # Э6: справочник — только подписчикам канала. 0 (по умолчанию) — всё как до Э6
+    SUB_GATE_ENABLED = os.environ.get("SUB_GATE_ENABLED", "0") == "1"
+    SUB_CHANNEL = os.environ.get("SUB_CHANNEL", "@consultinchina")
 
 
 config = Config()

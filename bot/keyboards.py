@@ -1,6 +1,8 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup
 
-BTN_ASK = "💬 Задать вопрос"
+BTN_ASK = "📚 Справочник-консультант"
+# Прежняя надпись (до Э6): у части пользователей в Telegram ещё старая клавиатура — работает как «Справочник»
+LEGACY_ASK = "💬 Задать вопрос"
 BTN_QUALIFY = "📊 Подходит ли мне компания в Китае"
 BTN_MANAGER = "👤 Связаться со специалистом"
 # Прежняя надпись: у части пользователей в Telegram ещё старая клавиатура
@@ -12,14 +14,14 @@ LEGACY_KB = "📚 Справочник"
 LEGACY_TICKETS = "✉️ Обращения"
 LEGACY_DOCS = "📄 Документы"
 
-MENU_TEXTS = {BTN_ASK, BTN_QUALIFY, BTN_MANAGER, BTN_MATERIALS, BTN_LIMIT, LEGACY_KB, LEGACY_TICKETS, LEGACY_DOCS, LEGACY_MANAGER}
+MENU_TEXTS = {BTN_ASK, LEGACY_ASK, BTN_QUALIFY, BTN_MANAGER, BTN_MATERIALS, BTN_LIMIT, LEGACY_KB, LEGACY_TICKETS, LEGACY_DOCS, LEGACY_MANAGER}
 
 MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_ASK)],
         [KeyboardButton(text=BTN_QUALIFY)],
-        [KeyboardButton(text=BTN_MANAGER), KeyboardButton(text=BTN_MATERIALS)],
-        [KeyboardButton(text=BTN_LIMIT)],
+        [KeyboardButton(text=BTN_MANAGER)],  # отдельным рядом: на телефоне в паре надпись переносилась (Э6)
+        [KeyboardButton(text=BTN_MATERIALS), KeyboardButton(text=BTN_LIMIT)],
     ],
     resize_keyboard=True,
 )

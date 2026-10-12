@@ -21,6 +21,7 @@ import time
 import traceback
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -37,6 +38,7 @@ from aiogram.methods import (
     DeleteWebhook,
     EditMessageReplyMarkup,
     EditMessageText,
+    GetChatMember,
     SendChatAction,
     SendDocument,
     SendMessage,
@@ -189,7 +191,7 @@ def markup_of(rm) -> Optional[dict]:
     if rm is None:
         return None
     if isinstance(rm, InlineKeyboardMarkup):
-        return {"inline": [[b.text for b in row] for row in rm.inline_keyboard]}
+        return {"inline": [[b.text + (f" [ссылка {b.url}]" if b.url else "") for b in row] for row in rm.inline_keyboard]}
     if isinstance(rm, ReplyKeyboardMarkup):
         return {"reply": [[b.text + (" [контакт]" if b.request_contact else "") for b in row] for row in rm.keyboard]}
     if isinstance(rm, ReplyKeyboardRemove):
@@ -233,6 +235,18 @@ class FakeSession(BaseSession):
         name = type(method).__name__
         if isinstance(method, (SendChatAction, DeleteWebhook)):
             return True
+        if isinstance(method, GetChatMember):
+            # Э6: подписка на канал — статус задаёт сценарий шагом {"sub": "..."} (по умолчанию member)
+            uid = int(method.user_id)
+            status = sim.sub_status.get(uid, "member")
+            sim.record({"api": "get_chat_member", "chat": str(method.chat_id), "user": uid, "result": status})
+            if status == "error":
+                raise TelegramBadRequest(method=method, message="Bad Request: member list is inaccessible")
+            if status == "restricted_member":
+                return SimpleNamespace(status="restricted", is_member=True)
+            if status == "restricted_left":
+                return SimpleNamespace(status="restricted", is_member=False)
+            return SimpleNamespace(status=status)
         if isinstance(method, AnswerCallbackQuery):
             sim.record({"api": "answer_callback", "text": method.text, "show_alert": method.show_alert})
             return True
@@ -343,6 +357,7 @@ class Simulator:
         self.current: Optional[list] = None
         self.leads_chat: Optional[int] = None
         self.reports_chat: Optional[int] = None
+        self.sub_status: dict[int, str] = {}  # Э6: ответ getChatMember по пользователю
 
     # учёт исходящих
     def record(self, entry: dict) -> None:
@@ -425,6 +440,9 @@ class Simulator:
                 action = {"type": "click", "button": step["click"]}
                 if not b:
                     action["error"] = "кнопка не найдена среди inline-кнопок бота"
+                elif b.url:
+                    action["matched"] = b.text
+                    action["error"] = f"кнопка-ссылка ({b.url}) — в боте не нажимается"
                 else:
                     action["matched"] = b.text
                     cq = CallbackQuery(id=f"e2e{self.user_msg_id}", from_user=self._user(uid, sc),
@@ -465,6 +483,36 @@ class Simulator:
                 for k in gone:
                     del self.messages[k]
                 action = {"type": "delete_group_messages", "group": step["delete_group_messages"], "deleted": len(gone)}
+            elif "sub" in step:
+                # Э6: статус в канале для getChatMember: member / left / kicked / administrator / creator /
+                # restricted_member / restricted_left / error. Кэш бота (10 мин) сбрасываем — «прошло время»
+                from services import subgate
+                self.sub_status[uid] = step["sub"]
+                subgate._cache.pop(uid, None)
+                action = {"type": "sub", "status": step["sub"]}
+            elif "set_role" in step:
+                await database.ensure_user(uid, sc.get("username", f"e2e_{abs(uid)}"), sc.get("first_name"))
+                await database.set_role(uid, step["set_role"])
+                action = {"type": "set_role", "role": step["set_role"]}
+            elif "as_admin" in step:
+                # Э6: этот тестовый пользователь — «админ» для проверки стены и лимитов (до конца сценария)
+                config.ADMIN_TELEGRAM_ID = uid if step["as_admin"] else self.real_admin
+                action = {"type": "as_admin", "on": bool(step["as_admin"])}
+            elif "tests_exempt" in step:
+                # Э6: как в рабочем боте — тестовые (ID < 0 / source='test') без проверки подписки
+                from services import subgate
+                subgate.TESTS_EXEMPT = bool(step["tests_exempt"])
+                action = {"type": "tests_exempt", "on": subgate.TESTS_EXEMPT}
+            elif "gate" in step:
+                config.SUB_GATE_ENABLED = step["gate"] == "on"
+                action = {"type": "gate", "enabled": config.SUB_GATE_ENABLED}
+            elif "report" in step:
+                # Отчёт 09:00 по тестовым пользователям за сегодня (как /stats test) — без отправки в группу
+                from services.limits import shanghai_today
+                from services.stats import daily_report
+                text = await daily_report(shanghai_today(), scope="test")
+                out.append({"api": "report", "text": text})
+                action = {"type": "report", "scope": "test"}
             elif "note" in step:
                 action = {"type": "note", "text": step["note"]}
             else:
@@ -552,7 +600,8 @@ def render_md(results: list, summary: dict) -> str:
         lines += [f"## {r['id']}. {r.get('title', '')}", f"Пользователь {r['user']}", ""]
         for n, s in enumerate(r["steps"], 1):
             a = s["action"]
-            desc = (a.get("text") or a.get("button") or a.get("phone") or a.get("questions_used")
+            desc = (a.get("text") or a.get("button") or a.get("phone") or a.get("questions_used") or a.get("status")
+                    or a.get("role") or (str(a.get("on", a.get("enabled", ""))) if a.get("type") in ("as_admin", "gate", "tests_exempt") else "")
                     or (a.get("blocked") if a.get("type") == "guard_probe" else "") or "")
             if isinstance(desc, str) and len(desc) > 300:
                 desc = desc[:300] + f"… [{len(a.get('text', ''))} симв.]"
@@ -571,6 +620,11 @@ def render_md(results: list, summary: dict) -> str:
                         lines.append(f"  кнопки: `{json.dumps(o['buttons'], ensure_ascii=False)}`")
                 elif api == "edit_markup":
                     lines.append(f"- ◀ edit_markup → {o['target']}: `{json.dumps(o['buttons'], ensure_ascii=False)}`")
+                elif api == "get_chat_member":
+                    lines.append(f"- ◀ getChatMember {o['chat']} → `{o['result']}`")
+                elif api == "report":
+                    lines.append("- ◀ **отчёт 09:00 (scope=test)**")
+                    lines.append("  > " + o["text"].replace("\n", "\n  > "))
                 elif api == "answer_callback":
                     lines.append(f"- ◀ answer_callback" + (f": «{o['text']}»" if o.get("text") else ""))
                 else:
@@ -597,6 +651,12 @@ async def run(scenarios_path: str, out_dir: str) -> int:
     # перезапишет их тестовыми (E2E_…), а очистка их обнулит. Запоминаем до прогона и возвращаем после.
     fileid_snapshot = await snapshot_file_ids()
     sim = Simulator()
+    sim.real_admin = config.ADMIN_TELEGRAM_ID
+    # Э6: стена подписки включена (как в рабочем .env после выкладки), тестовые пользователи — НЕ исключение,
+    # иначе стену не проверить; по умолчанию все «подписаны» (getChatMember → member), сценарий меняет шагом "sub"
+    from services import subgate
+    config.SUB_GATE_ENABLED = data.get("sub_gate", True) if isinstance(data, dict) else True
+    subgate.TESTS_EXEMPT = False
     from services.leads import leads_chat_id
     sim.leads_chat = await leads_chat_id()
     from services.notify import chat_id_for
@@ -614,6 +674,9 @@ async def run(scenarios_path: str, out_dir: str) -> int:
             res = {"id": sc["id"], "title": sc.get("title", ""), "user": uid, "steps": []}
             for st in sc["steps"]:
                 res["steps"].append(await sim.step(uid, sc, st))
+            config.ADMIN_TELEGRAM_ID = sim.real_admin  # "as_admin", "gate", "tests_exempt" — только внутри сценария
+            subgate.TESTS_EXEMPT = False
+            config.SUB_GATE_ENABLED = data.get("sub_gate", True) if isinstance(data, dict) else True
             results.append(res)
             jsonl.write(json.dumps(res, ensure_ascii=False) + "\n")
             jsonl.flush()

@@ -28,7 +28,7 @@ async def _edit_markup(callback: CallbackQuery, row, show_suggestions: bool) -> 
         logger.debug("Кнопки не обновились (сообщение старое или не изменилось)")
 
 
-# --- подсказка: как обычный вопрос клиента (лимит −1) ----------------------------
+# --- подсказка: как обычный вопрос клиента (лимит −1; без подписки — стена, Э6) ----
 
 @router.callback_query(F.data.regexp(r"^sug:\d+:[01]$"))
 async def suggestion_click(callback: CallbackQuery, state: FSMContext) -> None:
@@ -44,7 +44,7 @@ async def suggestion_click(callback: CallbackQuery, state: FSMContext) -> None:
     await database.log_event(callback.from_user.id, "suggestion_click", json.dumps({"message_id": int(mid), "i": int(i)}))
     await callback.message.answer(f"❓ {text}")
     user = await database.get_user(callback.from_user.id)
-    await ask_and_reply(callback.bot, callback.message.chat.id, callback.from_user.id, user, text)
+    await ask_and_reply(callback.bot, callback.message.chat.id, callback.from_user.id, user, text, via="suggestion")
 
 
 # --- «📝 Заказать: <услуга>»: ключ услуги — в самой кнопке ---------------------------

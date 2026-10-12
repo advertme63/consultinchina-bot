@@ -52,6 +52,9 @@ class Stats:
     orders: dict = field(default_factory=lambda: defaultdict(lambda: defaultdict(int)))  # сегмент → услуга → n
     orders_taken: int = 0
     limit_hit: dict = field(default_factory=dict)
+    # Э6, стена подписки: (источник | сегмент) → [показали, подписались] — уникальные пользователи
+    wall_by_source: dict = field(default_factory=dict)
+    wall_by_segment: dict = field(default_factory=dict)
     cost_total: float = 0.0
     cost_tests: float = 0.0
     cost_admin: float = 0.0
@@ -61,7 +64,7 @@ class Stats:
     @property
     def is_empty(self) -> bool:
         return not (sum(self.users.values()) or sum(self.questions.values()) or sum(self.leads.values())
-                    or self.orders or self.quals)
+                    or self.orders or self.quals or self.wall_by_source)
 
 
 async def collect(start: datetime, end: datetime, title: str, scope: str = "real") -> Stats:
@@ -119,6 +122,19 @@ async def collect(start: datetime, end: datetime, title: str, scope: str = "real
             else:
                 s.leads[r["seg"]] = s.leads.get(r["seg"], 0) + r["n"]
                 s.leads_taken += r["taken"]
+        for r in await conn.fetch(f"""
+            WITH shown AS (SELECT DISTINCT e.telegram_id FROM events e
+                           WHERE {wa("e")} AND e.type = 'sub_gate_shown'),
+                 conf AS (SELECT DISTINCT e.telegram_id FROM events e
+                          WHERE {wa("e")} AND e.type = 'sub_confirmed')
+            SELECT COALESCE(u.source, '—') src, COALESCE(u.segment, 'none') seg,
+                   count(*) shown, count(c.telegram_id) confirmed
+            FROM shown JOIN users u USING (telegram_id) LEFT JOIN conf c USING (telegram_id)
+            WHERE {u} GROUP BY 1, 2""", start, end):
+            for d, k in ((s.wall_by_source, r["src"]), (s.wall_by_segment, r["seg"])):
+                d.setdefault(k, [0, 0])
+                d[k][0] += r["shown"]
+                d[k][1] += r["confirmed"]
         cost = await conn.fetchrow(f"""
             SELECT COALESCE(sum(l.cost_usd), 0) total,
                    COALESCE(sum(l.cost_usd) FILTER (WHERE l.telegram_id < 0 OR u.source = 'test'), 0) tests,
@@ -132,6 +148,26 @@ async def collect(start: datetime, end: datetime, title: str, scope: str = "real
 
 def _join(d: dict, fmt=lambda k: k) -> str:
     return ", ".join(f"{fmt(k)} {v}" for k, v in sorted(d.items(), key=lambda x: -x[1]))
+
+
+def pct(part: int, whole: int) -> str:
+    return f"{round(100 * part / whole)}%" if whole else "—"
+
+
+def wall_lines(s: Stats) -> list[str]:
+    """«Стена подписки: показали N · подписались M (K%)» + по источникам и сегментам (Э6)."""
+    shown = sum(v[0] for v in s.wall_by_source.values())
+    if not shown and not config.SUB_GATE_ENABLED:
+        return []
+    confirmed = sum(v[1] for v in s.wall_by_source.values())
+    lines = [f"Стена подписки: показали {shown} · подписались {confirmed} ({pct(confirmed, shown)})"]
+
+    def part(d: dict, fmt) -> str:
+        return ", ".join(f"{fmt(k)} {v[1]}/{v[0]}" for k, v in sorted(d.items(), key=lambda x: -x[1][0]))
+    if shown:
+        lines.append(f"  по источникам (подписались/показали): {part(s.wall_by_source, lambda k: k)}")
+        lines.append(f"  по сегментам: {part(s.wall_by_segment, seg_label)}")
+    return lines
 
 
 def render(s: Stats) -> str:
@@ -162,6 +198,7 @@ def render(s: Stats) -> str:
         f"Заказов через кнопку: {sum(orders_flat.values())}" + (f" ({_join(orders_flat)})" if orders_flat else "")
         + (f" · взято в работу: {s.orders_taken}" if orders_flat else ""),
         f"Упёрлись в лимит: {sum(s.limit_hit.values())}",
+        *wall_lines(s),
         f"Расход Claude API: {cost}",
         "",
         "По сегментам:",
