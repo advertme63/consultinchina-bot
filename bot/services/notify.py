@@ -91,12 +91,13 @@ async def send_to_group(
 
 
 
-async def send_markdown_to_group(bot: Bot, kind: str, text: str) -> Optional[Message]:
+async def send_markdown_to_group(bot: Bot, kind: str, text: str, **kwargs) -> Optional[Message]:
     """Текст от Claude (**жирный**, списки, #заголовки) → Telegram-HTML; Telegram отклонил разметку — без неё."""
     from services.tg_format import to_plain, to_telegram_html
 
     try:
-        return await send_to_group(bot, kind, to_telegram_html(text, limit=None), raise_bad_markup=True, parse_mode="HTML")
+        return await send_to_group(bot, kind, to_telegram_html(text, limit=None), raise_bad_markup=True, parse_mode="HTML",
+                                   **kwargs)
     except TelegramBadRequest:
         logger.warning("Группа %s: Telegram отклонил HTML отчёта — отправляю без разметки", kind)
-        return await send_to_group(bot, kind, to_plain(text, limit=None), parse_mode=None)
+        return await send_to_group(bot, kind, to_plain(text, limit=None), parse_mode=None, **kwargs)

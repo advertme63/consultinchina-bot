@@ -25,8 +25,8 @@ async def leads_chat_id() -> Optional[int]:
 
 
 async def send_to_group(bot: Bot, text: str, **kwargs) -> Optional[Message]:
-    """Отправка в «CinC Лиды» — через общий services/notify (migrate_to_chat_id, ошибки → админу)."""
-    return await notify.send_to_group(bot, "leads", text, **kwargs)
+    """Отправка в «CinC Лиды», тема «Заявки бота» — через общий services/notify (migrate_to_chat_id, ошибки → админу)."""
+    return await notify.send_to_group(bot, "leads", text, message_thread_id=config.LEADS_THREAD_LEADS, **kwargs)
 
 
 async def reply_or_new_card(bot: Bot, old, reply_text: str, full_card: str) -> Optional[Message]:
@@ -34,7 +34,8 @@ async def reply_or_new_card(bot: Bot, old, reply_text: str, full_card: str) -> O
     полная новая карточка без reply, group_message_id обновляется; админу ошибку не шлём (это не сбой)."""
     try:
         return await notify.send_to_group(bot, "leads", reply_text, raise_bad_markup=True,
-                                          reply_to_message_id=old["group_message_id"])
+                                          reply_to_message_id=old["group_message_id"],
+                                          message_thread_id=config.LEADS_THREAD_LEADS)
     except TelegramBadRequest as e:
         if "replied not found" not in str(e).lower() and "reply message not found" not in str(e).lower():
             logger.exception("Повтор заявки #%s: ошибка отправки", old["id"])

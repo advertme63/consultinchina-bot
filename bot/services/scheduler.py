@@ -15,6 +15,7 @@ from typing import Awaitable, Callable, Optional
 from aiogram import Bot
 
 import database
+from config import config
 from services import notify
 from services.limits import SHANGHAI_TZ, shanghai_now
 
@@ -43,7 +44,7 @@ async def job_digest(bot: Bot) -> None:
 
     text = await build_digest()
     if text:  # нет новых вопросов — не отправляем (ТЗ 7.1)
-        await notify.send_markdown_to_group(bot, "leads", text)
+        await notify.send_markdown_to_group(bot, "leads", text, message_thread_id=config.LEADS_THREAD_QUESTIONS)
 
 
 async def job_weekly(bot: Bot) -> None:

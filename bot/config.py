@@ -15,6 +15,9 @@ class Config:
     FTS_WEIGHT = float(os.environ.get("FTS_WEIGHT", "2.0"))
     # Группа «CinC Лиды»; после миграции в супергруппу актуальный ID берётся из settings.leads_chat_id
     LEADS_CHAT_ID = int(os.environ["LEADS_CHAT_ID"]) if os.environ.get("LEADS_CHAT_ID") else None
+    # Темы форума «CinC Лиды» (message_thread_id): заявки / новые вопросы. Пусто — без темы, как раньше
+    LEADS_THREAD_LEADS = int(os.environ["LEADS_THREAD_LEADS"]) if os.environ.get("LEADS_THREAD_LEADS") else None
+    LEADS_THREAD_QUESTIONS = int(os.environ["LEADS_THREAD_QUESTIONS"]) if os.environ.get("LEADS_THREAD_QUESTIONS") else None
     # Группа «CinC Отчёты» (отчёт 09:00, недельный анализ); после миграции — settings.reports_chat_id
     REPORTS_CHAT_ID = int(os.environ["REPORTS_CHAT_ID"]) if os.environ.get("REPORTS_CHAT_ID") else None
     # Цены Claude, USD за 1 млн токенов (claude-sonnet-5, страница цен Anthropic; значения — из .env)
