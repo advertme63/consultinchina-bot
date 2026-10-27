@@ -28,7 +28,7 @@
 
 ## Наборы сценариев
 
-В репозитории: `bot/scripts/e2e/scenarios/scenarios.json` (основной, 24 сценария), `scenarios_rerun.json` (J2–J5), `scenarios_e4.json`, `scenarios_e5.json`, `scenarios_e6.json`. Рабочие копии и выводы прогонов — в `/root/e2e_runs/`. Подмножество для прогона: выбрать сценарии по `id` в отдельный файл.
+В репозитории: `bot/scripts/e2e/scenarios/scenarios.json` (основной, 24 сценария), `scenarios_rerun.json` (J2–J5), `scenarios_e4.json`, `scenarios_e5.json`, `scenarios_e6.json`, `scenarios_e7.json` (комиссии, C01–C15). Рабочие копии и выводы прогонов — в `/root/e2e_runs/`. Подмножество для прогона: выбрать сценарии по `id` в отдельный файл.
 
 ## Формат сценариев
 
@@ -54,6 +54,15 @@
   `{"tests_exempt": true}` — тестовые без проверки, как в рабочем боте; `{"gate": "off"}` — как при `SUB_GATE_ENABLED=0`;
   `{"report": "daily"}` — отчёт 09:00 за сегодня по тестовым (scope=test) в лог прогона.
   В верхнем уровне файла `"sub_gate": false` выключает стену на весь прогон. Сценарии Э6 — `scenarios/scenarios_e6.json`.
+- Э7, комиссии: в верхнем уровне `"admin_user": -2071` (этот пользователь — админ: роутер админа строится с ним) и
+  `"wb_fixtures": {"RU": "wb_ru.json", "CN": "wb_cn.json"}` — ответы WB API из папки сценариев (к WB сеть не ходит).
+  Шаги: `{"wb_mock": "ok"}` (`ok` / `429` / `empty` / `broken` / `jump` / `missing` / `low_coverage`);
+  `{"document": "файл.xlsx", "file_name": "имя для бота.xlsx"}` — прислать файл из папки сценариев;
+  `{"set_settings": {"commissions:wb:last_success": "today-11", "…": null}}` (null — удалить ключ);
+  `{"tick": "08:30"}` — один проход планировщика в это время; `{"db_commissions": ["Одежда"]}` — строки mp_commissions + settings.
+  До прогона симулятор сохраняет mp_commissions и settings `commissions:%` / `job:commissions:last_run`, после — возвращает
+  (`mp_commissions_restored.identical` в summary). Справочник не грузится в базу знаний, а пишется в `kb_commissions_N.md` в папке вывода.
+  Фикстуры Э7 (wb_ru.json, wb_cn.json, xlsx Ozon, broken.xlsx) — в `/root/e2e_runs/e7_in/`, в репозиторий не входят.
 - У любого шага можно указать `"expect": "…"` — попадёт в отчёт рядом с фактом.
 - `click` ищет кнопку: точное совпадение → без учёта регистра → по подстроке.
 - Пауза между запросами к Voyage — 21 с (бесплатный тариф, 3 запроса в минуту), поэтому вопросы к ИИ идут медленно.
