@@ -1,0 +1,82 @@
+{
+  "admin_user": -2071,
+  "wb_fixtures": {"RU": "wb_ru.json", "CN": "wb_cn.json"},
+  "_files": "Фикстуры лежат рядом со сценариями (папка /e2e_in): wb_ru.json, wb_cn.json — ответы WB API; ozon_rf_07102026.xlsx, ozon_cn_01122025.xlsx — файлы Ozon; broken.xlsx — не xlsx. См. README, раздел Э7.",
+  "scenarios": [
+    {"id": "C01", "title": "WB dry: изменения без записи", "user": -2071, "fresh": true, "first_name": "Админ", "steps": [
+      {"db_commissions": ["Электроника", "Аксессуары", "Бытовая техника"], "expect": "до прогона: Электроника 35/18"},
+      {"wb_mock": "ok"},
+      {"send": "/sync_commissions dry", "expect": "проверка без записи, изменилось 3, таблица 24 категорий, ничего в «CinC Отчёты»"},
+      {"db_commissions": ["Электроника"], "expect": "не изменилось: 35/18, settings без commissions:wb"}
+    ]},
+    {"id": "C02", "title": "WB: запись, справочник, отчёт в «CinC Отчёты»", "user": -2071, "steps": [
+      {"wb_mock": "ok"},
+      {"send": "/sync_commissions", "expect": "отчёт в REPORTS_GROUP: обновлены, топ-5; kb_rebuild"},
+      {"db_commissions": ["Электроника", "Аксессуары", "Одежда"], "expect": "Электроника 37/20, FBW 33, источник WB API, дата сегодня; commissions:wb:last_success = сегодня"}
+    ]},
+    {"id": "C03", "title": "Защита: ставка изменилась > 15 п.п.", "user": -2071, "steps": [
+      {"wb_mock": "jump"},
+      {"send": "/sync_commissions", "expect": "🚨 тревога в REPORTS_GROUP: «Одежда» РФ 46 → 66"},
+      {"db_commissions": ["Одежда"], "expect": "Одежда РФ 46 — не записано"}
+    ]},
+    {"id": "C04", "title": "Защита: битый ответ", "user": -2071, "steps": [
+      {"wb_mock": "broken"},
+      {"send": "/sync_commissions", "expect": "🚨 тревога: нет полей kgvpMarketplace"}
+    ]},
+    {"id": "C05", "title": "Защита: пустой ответ", "user": -2071, "steps": [
+      {"wb_mock": "empty"},
+      {"send": "/sync_commissions", "expect": "🚨 тревога: пустой ответ"}
+    ]},
+    {"id": "C06", "title": "WB 429: без повтора", "user": -2071, "steps": [
+      {"wb_mock": "429"},
+      {"send": "/sync_commissions", "expect": "один запрос RU, тревога «429 — повтор при следующем запуске», без повторов"}
+    ]},
+    {"id": "C07", "title": "Защита: сопоставлено < 80 %", "user": -2071, "steps": [
+      {"wb_mock": "low_coverage"},
+      {"send": "/sync_commissions", "expect": "🚨 тревога: 18 из 24 (75 % < 80 %) + предупреждения о пропавших группах"}
+    ]},
+    {"id": "C08", "title": "Пропала одна группа WB — предупреждение, запись", "user": -2071, "steps": [
+      {"wb_mock": "missing"},
+      {"send": "/sync_commissions", "expect": "обновлены + ⚠️ группа «Фото и Видеотехника» пропала"},
+      {"db_commissions": ["Электроника"]}
+    ]},
+    {"id": "C09", "title": "Ozon РФ: файл от админа → превью → Записать", "user": -2071, "steps": [
+      {"document": "ozon_rf_07102026.xlsx", "file_name": "Tablica_kategoriy_dlya_rascheta_voznagrazhdeniya_07102026_1791447755.xlsx",
+       "expect": "превью: Ozon РФ, данные на 07.10.2026, изменилось 0, таблица, кнопки Записать / Отмена"},
+      {"click": "✅ Записать", "expect": "отчёт в REPORTS_GROUP, kb_rebuild"},
+      {"db_commissions": ["Одежда", "Компьютеры и ноутбуки", "Смартфоны"], "expect": "ozon_rf_date 2026-10-07, источник «Ozon, база знаний для продавцов», note без «*»"},
+      {"click": "✅ Записать", "expect": "кнопок уже нет — повтор невозможен"}
+    ]},
+    {"id": "C10", "title": "Ozon Китай: файл → Отмена", "user": -2071, "steps": [
+      {"document": "ozon_cn_01122025.xlsx", "file_name": "Tarifs_CN_01_12_2025_1761720496.xlsx",
+       "expect": "превью: Ozon Китай, данные на 01.12.2025, изменилось 0"},
+      {"click": "✖️ Отмена", "expect": "ничего не записано"},
+      {"db_commissions": ["Одежда"], "expect": "ozon_cn_date прежняя (2026-10-06), источник MarketBridge"}
+    ]},
+    {"id": "C11", "title": "Не тот файл: «Селект»", "user": -2071, "steps": [
+      {"document": "ozon_rf_07102026.xlsx", "file_name": "Tablica_Select_07102026.xlsx", "expect": "файл не принят: Селект / Fashion / WHD"}
+    ]},
+    {"id": "C12", "title": "Битый .xlsx", "user": -2071, "steps": [
+      {"document": "broken.xlsx", "file_name": "Tablica_kategoriy_07102026.xlsx", "expect": "файл не принят: не похоже на .xlsx"}
+    ]},
+    {"id": "C13", "title": "Планировщик 08:30: WB прошло 11 дней, Ozon Китай не обновлялся → WB + напоминание", "user": -2071, "steps": [
+      {"set_settings": {"commissions:wb:last_success": "today-11", "commissions:ozon_rf:last_success": "today-2",
+                        "commissions:ozon_cn:last_success": null, "commissions:ozon:last_reminder": null, "job:commissions:last_run": null}},
+      {"wb_mock": "ok"},
+      {"tick": "08:30", "expect": "запущены: ['commissions']; отчёт WB в REPORTS_GROUP; админу напоминание про Ozon Китай со ссылками"},
+      {"tick": "08:35", "expect": "запущены: [] — второй раз за день не запускается"},
+      {"db_commissions": [], "expect": "commissions:wb:last_success = сегодня, ozon:last_reminder = сегодня"}
+    ]},
+    {"id": "C14", "title": "Планировщик: рано и напоминание не чаще раза в 3 дня", "user": -2071, "steps": [
+      {"set_settings": {"commissions:wb:last_success": "today-3", "commissions:ozon_rf:last_success": "today-1",
+                        "commissions:ozon_cn:last_success": "today-12", "commissions:ozon:last_reminder": "today-1", "job:commissions:last_run": null}},
+      {"wb_mock": "ok"},
+      {"tick": "08:30", "expect": "запущены: ['commissions'], но WB не запрашивается и напоминания нет"}
+    ]},
+    {"id": "C15", "title": "Не админ присылает .xlsx — бот не разбирает", "user": -2072, "fresh": true, "steps": [
+      {"start": ""},
+      {"document": "ozon_rf_07102026.xlsx", "file_name": "Tablica_kategoriy_dlya_rascheta_voznagrazhdeniya_07102026_1791447755.xlsx",
+       "expect": "ни разбора, ни download_file"}
+    ]}
+  ]
+}

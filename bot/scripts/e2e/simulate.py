@@ -39,6 +39,7 @@ from aiogram.methods import (
     EditMessageReplyMarkup,
     EditMessageText,
     GetChatMember,
+    GetFile,
     SendChatAction,
     SendDocument,
     SendMessage,
@@ -48,6 +49,7 @@ from aiogram.types import (
     Chat,
     Contact,
     Document,
+    File,
     InlineKeyboardMarkup,
     Message,
     ReplyKeyboardMarkup,
@@ -212,9 +214,14 @@ class FakeSession(BaseSession):
     async def close(self) -> None:
         pass
 
-    async def stream_content(self, *args, **kwargs):  # pragma: no cover
-        raise RuntimeError("E2E: stream_content не поддерживается")
-        yield b""
+    async def stream_content(self, url: str = "", *args, **kwargs):
+        """bot.download(): отдаём локальный файл, «присланный» шагом {"document": ...} (Э7, файлы Ozon)."""
+        name = str(url).rsplit("/", 1)[-1]
+        path = self.sim.files.get(name)
+        if path is None:
+            raise RuntimeError(f"E2E: файл {name} не присылался в сценарии")
+        self.sim.record({"api": "download_file", "file": name})
+        yield Path(path).read_bytes()
 
     def _new_message(self, bot: Bot, chat_id: int, text: str, rm) -> Message:
         self._next_id += 1
@@ -247,6 +254,8 @@ class FakeSession(BaseSession):
             if status == "restricted_left":
                 return SimpleNamespace(status="restricted", is_member=False)
             return SimpleNamespace(status=status)
+        if isinstance(method, GetFile):
+            return File(file_id=method.file_id, file_unique_id=f"u{method.file_id}", file_path=f"documents/{method.file_id}")
         if isinstance(method, AnswerCallbackQuery):
             sim.record({"api": "answer_callback", "text": method.text, "show_alert": method.show_alert})
             return True
@@ -358,6 +367,11 @@ class Simulator:
         self.leads_chat: Optional[int] = None
         self.reports_chat: Optional[int] = None
         self.sub_status: dict[int, str] = {}  # Э6: ответ getChatMember по пользователю
+        self.files: dict[str, str] = {}  # Э7: file_id → локальный путь (шаг "document")
+        self.wb_mode = "ok"  # Э7: подмена ответа WB API (шаг "wb_mock")
+        self.wb_fixtures: dict[str, list] = {}
+        self.in_dir = Path("/e2e_in")
+        self.out_dir: Optional[Path] = None
 
     # учёт исходящих
     def record(self, entry: dict) -> None:
@@ -513,6 +527,57 @@ class Simulator:
                 text = await daily_report(shanghai_today(), scope="test")
                 out.append({"api": "report", "text": text})
                 action = {"type": "report", "scope": "test"}
+            elif "wb_mock" in step:
+                # Э7: ответ WB API для следующих запросов: ok / 429 / empty / broken / jump / missing / low_coverage
+                self.wb_mode = step["wb_mock"]
+                from services import commission_sync
+                commission_sync._wb_cache.clear()
+                action = {"type": "wb_mock", "status": self.wb_mode}
+            elif "document" in step:
+                # Э7: пользователь (админ) присылает файл: локальный путь относительно папки сценариев
+                name = step.get("file_name") or Path(step["document"]).name
+                fid = f"E2E_DOC_{self.user_msg_id}"
+                self.files[fid] = str(self.in_dir / step["document"])
+                size = Path(self.files[fid]).stat().st_size
+                action = {"type": "document", "text": name}
+                msg = Message(message_id=self.user_msg_id, date=datetime.now(timezone.utc), chat=self._chat(uid, sc),
+                              from_user=self._user(uid, sc),
+                              document=Document(file_id=fid, file_unique_id=f"u{fid}", file_name=name, file_size=size))
+                await self.feed(Update(update_id=self.user_msg_id, message=msg))
+            elif "set_settings" in step:
+                # Э7: settings для проверки планировщика; "today-11" → дата Шанхая 11 дней назад, null — удалить
+                from services.limits import shanghai_today
+                from datetime import timedelta
+                done = {}
+                for k, v in step["set_settings"].items():
+                    if isinstance(v, str) and v.startswith("today"):
+                        v = (shanghai_today() + timedelta(days=int(v[5:] or 0))).isoformat()
+                    async with database.pool().acquire() as conn:
+                        if v is None:
+                            await conn.execute("DELETE FROM settings WHERE key = $1", k)
+                        else:
+                            await database.set_setting(k, str(v))
+                    done[k] = v
+                action = {"type": "set_settings", "text": json.dumps(done, ensure_ascii=False)}
+            elif "tick" in step:
+                # Э7: один тик планировщика «сегодня в HH:MM» по Шанхаю
+                from services import scheduler
+                from services.limits import SHANGHAI_TZ, shanghai_today
+                hh, mm = map(int, step["tick"].split(":"))
+                now = datetime.combine(shanghai_today(), datetime.min.time(), tzinfo=SHANGHAI_TZ).replace(hour=hh, minute=mm)
+                started = await scheduler.tick(self.bot, now)
+                action = {"type": "tick", "text": f"{step['tick']} → запущены: {started}"}
+            elif "db_commissions" in step:
+                # Э7: текущие строки mp_commissions (выбранные категории) — в лог прогона
+                rows = {r["button"]: r for r in await database.list_commissions()}
+                keys = step["db_commissions"] or list(rows)
+                cols = ("wb_category", "wb_rf_pct", "wb_cn_pct", "wb_fbw_pct", "wb_source", "wb_date", "ozon_category",
+                        "ozon_rf_pct", "ozon_rf_date", "ozon_rf_source", "ozon_cn_pct", "ozon_cn_date", "note")
+                snap = {k: {c: (str(rows[k][c]) if rows[k][c] is not None else None) for c in cols} for k in keys if k in rows}
+                async with database.pool().acquire() as conn:
+                    st = {r["key"]: r["value"] for r in await conn.fetch("SELECT key, value FROM settings WHERE key LIKE 'commissions:%'")}
+                out.append({"api": "db", "text": json.dumps({"rows": snap, "settings": st}, ensure_ascii=False, indent=1)})
+                action = {"type": "db_commissions", "text": ", ".join(keys) or "все"}
             elif "note" in step:
                 action = {"type": "note", "text": step["note"]}
             else:
@@ -579,6 +644,75 @@ async def restore_file_ids(snapshot: dict[int, Optional[str]]) -> int:
     return restored
 
 
+# --- Э7: комиссии — рабочие данные не меняются прогоном ----------------------------------
+
+async def snapshot_commissions() -> dict:
+    async with database.pool().acquire() as conn:
+        rows = [dict(r) for r in await conn.fetch("SELECT * FROM mp_commissions ORDER BY position")]
+        st = [dict(r) for r in await conn.fetch(
+            "SELECT key, value FROM settings WHERE key LIKE 'commissions:%' OR key = 'job:commissions:last_run'")]
+    return {"rows": rows, "settings": st}
+
+
+async def restore_commissions(snap: dict) -> dict:
+    """mp_commissions и settings commissions:* — ровно как до прогона (сравнение — в summary)."""
+    async with database.pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("DELETE FROM mp_commissions")
+            for r in snap["rows"]:
+                cols = list(r)
+                await conn.execute(f"INSERT INTO mp_commissions ({', '.join(cols)}) VALUES "
+                                   f"({', '.join(f'${i + 1}' for i in range(len(cols)))})", *r.values())
+            await conn.execute("DELETE FROM settings WHERE key LIKE 'commissions:%' OR key = 'job:commissions:last_run'")
+            for r in snap["settings"]:
+                await conn.execute("INSERT INTO settings (key, value) VALUES ($1, $2)", r["key"], r["value"])
+    after = await snapshot_commissions()
+    return {"rows": len(after["rows"]), "settings": len(after["settings"]),
+            "identical": json.dumps(after, default=str, sort_keys=True) == json.dumps(snap, default=str, sort_keys=True)}
+
+
+def install_commission_patches(sim: "Simulator") -> None:
+    """WB API — фикстуры из папки сценариев вместо сети; справочник — в папку прогона, без загрузки в базу знаний."""
+    import copy
+    from services import commission_sync as cs
+    from services.commissions_kb import build_markdown
+
+    async def fake_fetch(kind: str):
+        mode = sim.wb_mode
+        sim.record({"api": "wb_fetch", "text": f"{kind}: {mode}"})
+        if mode == "429":
+            raise cs.RateLimited(f"WB ({kind}): 429 — лимит запросов, повтор при следующем запуске")
+        if mode == "empty":
+            raise cs.SyncError(f"WB ({kind}): пустой ответ")
+        data = copy.deepcopy(sim.wb_fixtures[kind])
+        if mode == "broken" and kind == "RU":
+            for x in data:
+                x.pop("kgvpMarketplace", None)
+        elif mode == "jump" and kind == "RU":
+            for x in data:
+                if x["parentID"] == 1:  # «Одежда»: +20 п.п.
+                    x["kgvpMarketplace"] += 20
+        elif mode == "missing":
+            data = [x for x in data if x["parentID"] != 6261]  # «Фото и Видеотехника» пропала
+        elif mode == "low_coverage":  # пропали группы 6 категорий → 18 из 24 = 75 %
+            gone = {1, 1513, 2, 3, 200, 49}
+            data = [x for x in data if x["parentID"] not in gone]
+        return data
+
+    async def fake_rebuild() -> str:
+        rows = await database.list_commissions()
+        md = build_markdown([dict(r) for r in rows])
+        sim.kb_rebuilds += 1
+        if sim.out_dir:
+            (sim.out_dir / f"kb_commissions_{sim.kb_rebuilds}.md").write_text(md, encoding="utf-8")
+        sim.record({"api": "kb_rebuild", "text": f"справочник пересобран ({len(md)} симв.), загрузка в базу знаний — "
+                                                 f"пропущена в e2e; kb_commissions_{sim.kb_rebuilds}.md"})
+        return "e2e: без загрузки"
+
+    cs.fetch_wb = fake_fetch
+    cs.rebuild_kb = fake_rebuild
+
+
 async def reset_user(sim: Simulator, uid: int) -> None:
     assert ID_MIN <= uid <= ID_MAX
     async with database.pool().acquire() as conn:
@@ -622,6 +756,8 @@ def render_md(results: list, summary: dict) -> str:
                     lines.append(f"- ◀ edit_markup → {o['target']}: `{json.dumps(o['buttons'], ensure_ascii=False)}`")
                 elif api == "get_chat_member":
                     lines.append(f"- ◀ getChatMember {o['chat']} → `{o['result']}`")
+                elif api in ("db", "kb_rebuild", "wb_fetch", "download_file"):
+                    lines.append(f"- ◀ **{api}** " + str(o.get("text", o.get("file", "")))[:4000].replace("\n", "\n  > "))
                 elif api == "report":
                     lines.append("- ◀ **отчёт 09:00 (scope=test)**")
                     lines.append("  > " + o["text"].replace("\n", "\n  > "))
@@ -650,8 +786,21 @@ async def run(scenarios_path: str, out_dir: str) -> int:
     # Кэш file_id «📄 Материалов» — рабочие данные: симулятор не знает настоящих file_id, бот в прогоне
     # перезапишет их тестовыми (E2E_…), а очистка их обнулит. Запоминаем до прогона и возвращаем после.
     fileid_snapshot = await snapshot_file_ids()
+    commissions_snapshot = await snapshot_commissions()
+    # Э7: "admin_user" — тестовый пользователь становится админом ДО сборки диспетчера (фильтр роутеров админа
+    # фиксирует ADMIN_TELEGRAM_ID при импорте). Сообщения «админу» в этом прогоне уходят ему (target = user).
+    if isinstance(data, dict) and data.get("admin_user"):
+        assert ID_MIN <= int(data["admin_user"]) <= ID_MAX
+        config.ADMIN_TELEGRAM_ID = int(data["admin_user"])
     sim = Simulator()
     sim.real_admin = config.ADMIN_TELEGRAM_ID
+    sim.out_dir = out
+    sim.kb_rebuilds = 0
+    for kind in ("RU", "CN"):
+        fx = sim.in_dir / (data.get("wb_fixtures", {}).get(kind, f"wb_{kind.lower()}.json") if isinstance(data, dict) else "")
+        if fx.is_file():
+            sim.wb_fixtures[kind] = json.loads(fx.read_text())["report"]
+    install_commission_patches(sim)
     # Э6: стена подписки включена (как в рабочем .env после выкладки), тестовые пользователи — НЕ исключение,
     # иначе стену не проверить; по умолчанию все «подписаны» (getChatMember → member), сценарий меняет шагом "sub"
     from services import subgate
@@ -685,6 +834,7 @@ async def run(scenarios_path: str, out_dir: str) -> int:
         post = await cleanup() if not data.get("keep_users") else {"skipped": True}
         if isinstance(post, dict):
             post["files_library_file_id_restored"] = await restore_file_ids(fileid_snapshot)
+            post["mp_commissions_restored"] = await restore_commissions(commissions_snapshot)
         all_out = [o for r in results for s in r["steps"] for o in s["outputs"]]
         summary = {
             "started": started,

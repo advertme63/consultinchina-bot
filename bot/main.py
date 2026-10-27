@@ -8,7 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import database
 from config import config
-from handlers import admin, buttons, chat_member, documents, leads, qualify, questions, start
+from handlers import admin, buttons, chat_member, commissions_admin, documents, leads, qualify, questions, start
 from middlewares.access import AccessMiddleware
 
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +20,7 @@ def build_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(AccessMiddleware())
     dp.include_router(admin.router)
+    dp.include_router(commissions_admin.router)  # Э7: /sync_commissions, файл Ozon .xlsx
     dp.include_router(start.router)
     dp.include_router(documents.router)
     dp.include_router(qualify.router)

@@ -1,6 +1,6 @@
 """Планировщик задач Э4 на asyncio (без новых зависимостей). Время — Шанхай (UTC+8).
 
-Задачи: 09:00 отчёт за вчера → «CinC Отчёты»; 10:30 автоочистка (после бэкапа 03:15 по серверу);
+Задачи: 08:30 комиссии (Э7: раз в 10 дней WB, напоминание про файлы Ozon); 09:00 отчёт за вчера → «CinC Отчёты»; 10:30 автоочистка (после бэкапа 03:15 по серверу);
 19:00 сводка новых вопросов → «CinC Лиды»; пн 10:00 анализ недели → «CinC Отчёты».
 Защита от двойной отправки: settings['job:<имя>:last_run'] = дата Шанхая, ставится ДО запуска.
 Пропуск догоняется, только если опоздание ≤ MAX_LATE (рестарт в 09:05 — отчёт уйдёт; выкладка в 15:00 — нет).
@@ -47,6 +47,13 @@ async def job_digest(bot: Bot) -> None:
         await notify.send_markdown_to_group(bot, "leads", text, message_thread_id=config.LEADS_THREAD_QUESTIONS)
 
 
+async def job_commissions(bot: Bot) -> None:
+    """Э7: комиссии — WB, если прошло COMMISSIONS_SYNC_DAYS дней с успешного обновления; Ozon — напоминание админу."""
+    from services.commission_sync import scheduled
+
+    logger.info("Комиссии: %s", await scheduled(bot))
+
+
 async def job_weekly(bot: Bot) -> None:
     from services.weekly import build_weekly
 
@@ -67,6 +74,7 @@ async def job_cleanup(bot: Bot) -> None:
 
 
 JOBS = [
+    Job("commissions", time(8, 30), job_commissions),
     Job("daily_report", time(9, 0), job_daily_report),
     Job("weekly", time(10, 0), job_weekly, weekday=0),
     Job("cleanup", time(10, 30), job_cleanup),
