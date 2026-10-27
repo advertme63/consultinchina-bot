@@ -197,6 +197,11 @@ def _num(s: str) -> Optional[float]:
         return None
 
 
+def ozon_source(tariffs_from: date) -> str:
+    """Свежесть Ozon — по дате подтверждения файла (колонка *_date), дата из имени файла — в источнике (решение Ивана 27.10)."""
+    return f"{OZON_SOURCE}, тарифы с {fmt_date(tariffs_from)}"
+
+
 def plan_ozon_rf(data: bytes, file_name: str, today: date) -> Plan:
     d = date_from_filename(file_name)
     if not d:
@@ -220,7 +225,7 @@ def plan_ozon_rf(data: bytes, file_name: str, today: date) -> Plan:
     if fbs is None:
         raise SyncError("Ozon РФ: не найдена колонка FBS «свыше 300 руб.» — структура файла изменилась")
     items = [r for r in rows[2:] if len(r) > fbs and _num(r[fbs]) is not None]
-    plan = Plan("ozon_rf", d, OZON_SOURCE, file_name=file_name)
+    plan = Plan("ozon_rf", today, ozon_source(d), file_name=file_name)
     mains = {r[0] for r in items}
     for button, m in MAPPING.items():
         spec = m["ozon_rf"]
@@ -242,8 +247,8 @@ def plan_ozon_rf(data: bytes, file_name: str, today: date) -> Plan:
         plan.values[button] = {
             "ozon_category": m["ozon_category"],
             "ozon_rf_pct": top,
-            "ozon_rf_source": OZON_SOURCE,
-            "ozon_rf_date": d,
+            "ozon_rf_source": plan.source,
+            "ozon_rf_date": today,
             "ozon_rf_detail": {"fbs_over_300": str(top), "fbo_over_300": mode(fbo), "rfbs": mode(rfbs),
                                "types": len(sel), "file": file_name},
         }
@@ -275,7 +280,7 @@ def plan_ozon_cn(data: bytes, file_name: str, today: date) -> Plan:
     tiers_of = {r[3]: {"rfbs": [str(_pct(_num(r[i]))) for i in t_rf], "fbp": [str(_pct(_num(r[i]))) for i in t_fp]}
                 for r in tree[2:] if len(r) > max(t_fp) and all(_num(r[i]) is not None for i in t_rf + t_fp)}
     types = [r for r in full[2:] if len(r) > max(f_rf) and all(_num(r[i]) is not None for i in f_rf)]
-    plan = Plan("ozon_cn", d, OZON_SOURCE, file_name=file_name)
+    plan = Plan("ozon_cn", today, ozon_source(d), file_name=file_name)
     for button, m in MAPPING.items():
         spec = m["ozon_cn"]
         if not spec:
@@ -293,8 +298,8 @@ def plan_ozon_cn(data: bytes, file_name: str, today: date) -> Plan:
         tiers = [statistics.median(_pct(_num(r[i])) for r in sel) for i in f_rf]
         plan.values[button] = {
             "ozon_cn_pct": Decimal(tiers[1]).quantize(Decimal("0.01")),
-            "ozon_cn_source": OZON_SOURCE,
-            "ozon_cn_date": d,
+            "ozon_cn_source": plan.source,
+            "ozon_cn_date": today,
             "ozon_cn_tiers": {
                 "rfbs": [str(Decimal(t).quantize(Decimal("0.01"))) for t in tiers],
                 "tiers_rub": list(CN_TIERS),
@@ -347,6 +352,10 @@ JSON_COLUMNS = {"ozon_rf_detail", "ozon_cn_tiers"}
 async def apply(plan: Plan) -> None:
     """Записать площадку (только её колонки + примечание из сопоставления) и дату успешного обновления."""
     assert plan.ok, plan.problems
+    if plan.platform != "wb":  # Ozon: превью могли подтвердить не в день загрузки файла
+        plan.data_date = shanghai_today()
+        for vals in plan.values.values():
+            vals[f"{plan.platform}_date"] = plan.data_date
     cols = _COLUMNS[plan.platform]
     sets = ", ".join(f"{c} = ${i + 2}" for i, c in enumerate(cols)) + f", note = ${len(cols) + 2}, loaded_at = now()"
     async with database.pool().acquire() as conn:
@@ -396,7 +405,8 @@ def changes_text(plan: Plan, limit: Optional[int] = 5) -> list[str]:
 
 def report_text(plan: Plan, applied: bool, kb: Optional[str] = None) -> str:
     title = TITLES[plan.platform]
-    head = f"данные на {fmt_date(plan.data_date)} · {plan.source}" + (f" · файл {plan.file_name}" if plan.file_name else "")
+    head = (f"данные на {fmt_date(plan.data_date)}" if plan.platform == "wb" else
+            f"проверено {fmt_date(plan.data_date)}") + f" · {plan.source}" + (f" · файл {plan.file_name}" if plan.file_name else "")
     if not plan.ok:
         lines = [f"🚨 Комиссии {title} НЕ обновлены — сработала защита, старые данные остались", head, *plan.problems]
     else:
