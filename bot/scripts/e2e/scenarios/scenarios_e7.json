@@ -77,6 +77,11 @@
       {"start": ""},
       {"document": "ozon_rf_07102026.xlsx", "file_name": "Tablica_kategoriy_dlya_rascheta_voznagrazhdeniya_07102026_1791447755.xlsx",
        "expect": "ни разбора, ни download_file"}
+    ]},
+    {"id": "C16", "title": "Админ: обычные сообщения не ломаются фильтром xlsx (регресс 28.10)", "user": -2071, "fresh": true, "steps": [
+      {"start": "", "expect": "обычное приветствие и меню, без ошибки"},
+      {"send": "📄 Материалы", "expect": "список материалов"},
+      {"send": "Сколько стоит открыть компанию в Китае?", "expect": "ответ справочника, без ошибки в логе"}
     ]}
   ]
 }

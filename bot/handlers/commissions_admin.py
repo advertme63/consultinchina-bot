@@ -51,7 +51,7 @@ def _confirm_kb(token: str) -> InlineKeyboardMarkup:
     ]])
 
 
-@router.message(StateFilter(None), F.document.func(lambda d: (d.file_name or "").lower().endswith(".xlsx")))
+@router.message(StateFilter(None), F.document.func(lambda d: d is not None and (d.file_name or "").lower().endswith(".xlsx")))
 async def ozon_file(message: Message) -> None:
     doc = message.document
     if doc.file_size and doc.file_size > MAX_FILE:
